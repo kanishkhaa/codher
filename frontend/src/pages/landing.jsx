@@ -65,8 +65,8 @@ const ProcessFlow = () => {
   ];
 
   return (
-    <div className="container mx-auto px-4 py-16 relative z-10 translate-x-20">
-      <h2 className="text-3xl font-bold text-center text-gray-200 mb-20 bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-600">
+    <div className="container mx-auto px-4 py-16 relative z-10 translate-x-16">
+      <h2 className="text-3xl font-bold text-center text-gray-200 mb-30 bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-600 -translate-x-16">
         Streamlined Digital Health Workflow
       </h2>
       <div className="relative w-full max-w-5xl mx-auto">
@@ -98,14 +98,14 @@ const ProcessFlow = () => {
           </svg>
         </div>
         
-        <div className="relative flex justify-between items-start z-10">
+        <div className="relative flex justify-between items-start z-10 -translate-x-16">
           {processSteps.map((item) => (
             <div 
               key={item.step} 
               className="flex flex-col items-center w-1/3 relative group"
             >
               <div 
-                className={`w-32 h-32 rounded-full bg-gray-800 border-4 border-${item.color}-500 flex items-center justify-center relative z-20 shadow-2xl transform transition-all duration-300 group-hover:scale-110 group-hover:-translate-y-2`}
+                className={`w-32 h-32 rounded-full bg-gray-800 border-4 border-${item.color}-500 flex items-center justify-center relative z-20 shadow-2xl transform transition-all duration-300 group-hover:scale-110 group-hover:-translate-y-4`}
               >
                 <div className={`w-20 h-20 rounded-full bg-${item.color}-900/50 flex items-center justify-center`}>
                   <Lottie 
