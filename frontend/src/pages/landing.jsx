@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion'; // Import framer-motion for animations
+import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import Lottie from "lottie-react";
 import { Award, Shield, Zap, Globe, Heart, Cpu } from 'lucide-react';
 import healthAnimation from '../health-animation.json';
@@ -40,6 +41,7 @@ const Logo = () => (
 
 // ProcessFlow Component
 const ProcessFlow = () => {
+  const navigate = useNavigate();
   const processSteps = [
     { 
       step: 1, 
@@ -70,7 +72,6 @@ const ProcessFlow = () => {
         Streamlined Digital Health Workflow
       </h2>
       <div className="relative w-full max-w-5xl mx-auto">
-        {/* Curved connecting line */}
         <div className="absolute top-1/2 left-0 right-0 transform -translate-y-1/2 z-0">
           <svg width="100%" height="120" className="overflow-visible">
             <style>
@@ -86,7 +87,7 @@ const ProcessFlow = () => {
               `}
             </style>
             <path 
-              d="M-100 60 C250 20, 550 100, 1050 60" // Curved Bezier path
+              d="M-100 60 C250 20, 550 100, 1050 60"
               fill="none" 
               stroke="rgba(79, 209, 197, 0.3)" 
               strokeWidth="6" 
@@ -115,7 +116,6 @@ const ProcessFlow = () => {
                     className="drop-shadow-md"
                   />
                 </div>
-                {/* Number circle for all steps */}
                 <div 
                   className={`absolute -top-10 w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold shadow-md z-30 transform transition-all duration-300 group-hover:scale-110`}
                 >
@@ -137,6 +137,7 @@ const ProcessFlow = () => {
 // HeroSection Component
 const HeroSection = () => {
   const [hoveredStat, setHoveredStat] = useState(null);
+  const navigate = useNavigate();
   const heroStats = [
     { 
       icon: Award, 
@@ -158,10 +159,8 @@ const HeroSection = () => {
     }
   ];
 
-
   return (
     <div className="container mx-auto px-4 py-12 md:py-16 flex flex-col md:flex-row items-center relative z-10">
-      {/* Left Content */}
       <motion.div 
         className="md:w-1/2 mb-6 md:mb-0 pr-0 md:pr-8 space-y-6"
         initial={{ opacity: 0, x: -50 }}
@@ -187,12 +186,12 @@ const HeroSection = () => {
           </motion.p>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex space-x-4">
           <motion.button 
             className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-6 py-3 rounded-full text-base font-semibold hover:from-cyan-600 hover:to-blue-700 transition-all transform hover:scale-105 shadow-2xl hover:shadow-cyan-500/50 relative overflow-hidden flex items-center space-x-2"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
+            onClick={() => navigate('/form')}
           >
             <Cpu className="w-5 h-5" />
             <span> Health Profile</span>
@@ -207,7 +206,6 @@ const HeroSection = () => {
           </motion.button>
         </div>
 
-        {/* Hero Stats */}
         <div className="grid grid-cols-3 gap-4 mt-8">
           {heroStats.map((stat, index) => (
             <motion.div 
@@ -246,7 +244,6 @@ const HeroSection = () => {
         </div>
       </motion.div>
 
-      {/* Right Content - Animated Illustration */}
       <motion.div 
         className="md:w-1/2 flex justify-center relative"
         initial={{ opacity: 0, x: 50 }}
@@ -272,7 +269,6 @@ const HeroSection = () => {
             style={{ height: 500, width: 500 }}
           />
           
-          {/* Decorative Pulse Rings */}
           <motion.div 
             className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full h-full"
             animate={{
@@ -327,12 +323,12 @@ const Landing = () => {
       gradient: "from-rose-500 to-red-600"
     },
     {
-        title: "Smart Medication Tracking",
-        description: "Enhanced personalized reminders and precision management.",
-        animation: reminderAnimation,
-        color: "emerald",
-        gradient: "from-emerald-500 to-green-600"
-      },
+      title: "Smart Medication Tracking",
+      description: "Enhanced personalized reminders and precision management.",
+      animation: reminderAnimation,
+      color: "emerald",
+      gradient: "from-emerald-500 to-green-600"
+    },
     {
       title: "Digital Health Records",
       description: "Centralized repository for prescription management",
@@ -344,7 +340,6 @@ const Landing = () => {
 
   return (
     <div className="bg-gradient-to-br from-gray-900 to-black text-white overflow-hidden relative">
-      {/* Animated Background Grid */}
       <motion.div 
         className="absolute inset-0 pointer-events-none opacity-10 overflow-hidden"
         initial={{ opacity: 0.05 }}
@@ -361,18 +356,14 @@ const Landing = () => {
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.1)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.1)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
       </motion.div>
 
-      {/* Gradient Overlay */}
       <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 mix-blend-overlay"></div>
 
-      {/* Header with Logo */}
       <header className="container mx-auto px-4 py-6 relative z-10">
         <Logo />
       </header>
 
-      {/* Hero Section */}
       <HeroSection />
 
-      {/* Floating Decorative Elements */}
       <motion.div 
         className="absolute top-1/4 left-1/4 w-32 h-32 bg-cyan-500/20 rounded-full filter blur-2xl"
         animate={{
@@ -400,42 +391,40 @@ const Landing = () => {
         }}
       />
 
-      {/* Features Section */}
       <div className="container mx-auto px-4 py-12 relative z-10">
-  <h2 className="text-4xl font-bold text-center text-gray-200 mb-15 bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-600">
-    Health Management Features
-  </h2>
-  <div className="grid md:grid-cols-3 gap-6">
-    {features.map((feature, index) => (
-      <div 
-        key={index} 
-        className={`bg-gray-800/60 backdrop-blur-lg p-5 rounded-2xl shadow-2xl border border-gray-700/50 hover:border-${feature.color}-500 transition-all duration-300 transform hover:scale-105 group relative overflow-hidden`}
-        onMouseEnter={() => setActiveFeature(index)}
-        onMouseLeave={() => setActiveFeature(null)}
-      >
-        <div className={`absolute inset-0 bg-gradient-to-r ${feature.gradient} opacity-0 group-hover:opacity-20 transition-opacity duration-300 z-[-1]`}></div>
-        <div className="mb-4 flex items-center justify-center">
-          <Lottie 
-            animationData={feature.animation}
-            loop={true}
-            style={{ height: 150, width: 150 }}
-            className="drop-shadow-md"
-          />
-        </div>
-        <div className="text-center">
-          <h2 className={`text-xl font-semibold mb-2 text-${feature.color}-400`}>
-            {feature.title}
-          </h2>
-          <p className="text-lg text-gray-400">
-            {feature.description}
-          </p>
+        <h2 className="text-4xl font-bold text-center text-gray-200 mb-15 bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-600">
+          Health Management Features
+        </h2>
+        <div className="grid md:grid-cols-3 gap-6">
+          {features.map((feature, index) => (
+            <div 
+              key={index} 
+              className={`bg-gray-800/60 backdrop-blur-lg p-5 rounded-2xl shadow-2xl border border-gray-700/50 hover:border-${feature.color}-500 transition-all duration-300 transform hover:scale-105 group relative overflow-hidden`}
+              onMouseEnter={() => setActiveFeature(index)}
+              onMouseLeave={() => setActiveFeature(null)}
+            >
+              <div className={`absolute inset-0 bg-gradient-to-r ${feature.gradient} opacity-0 group-hover:opacity-20 transition-opacity duration-300 z-[-1]`}></div>
+              <div className="mb-4 flex items-center justify-center">
+                <Lottie 
+                  animationData={feature.animation}
+                  loop={true}
+                  style={{ height: 150, width: 150 }}
+                  className="drop-shadow-md"
+                />
+              </div>
+              <div className="text-center">
+                <h2 className={`text-xl font-semibold mb-2 text-${feature.color}-400`}>
+                  {feature.title}
+                </h2>
+                <p className="text-lg text-gray-400">
+                  {feature.description}
+                </p>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-    ))}
-  </div>
-</div>
 
-      {/* Process Flow Section */}
       <ProcessFlow />
     </div>
   );

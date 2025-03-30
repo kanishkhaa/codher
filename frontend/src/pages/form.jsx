@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom'; // Add this import
 import { 
   Check, 
   AlertCircle, 
@@ -30,6 +31,7 @@ const Form = () => {
 
   const [errors, setErrors] = useState({});
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const navigate = useNavigate(); // Add navigation hook
 
   const validateForm = () => {
     const newErrors = {};
@@ -66,6 +68,11 @@ const Form = () => {
     if (validateForm()) {
       setIsSubmitted(true);
       console.log('Form submitted:', formData);
+      
+      // Add navigation with a slight delay to show success message
+      setTimeout(() => {
+        navigate('/prescription');
+      }, 1500); // 1.5 second delay before redirecting
     }
   };
 
@@ -82,7 +89,6 @@ const Form = () => {
       <div className="w-full max-w-5xl bg-[#1E293B] rounded-2xl shadow-2xl overflow-hidden flex">
         {/* Robot Section with Gradient Animation */}
         <div className="w-1/2 bg-[#0F172A] flex items-center justify-center relative">
-          {/* Gradient Animation Background */}
           <div className="absolute inset-0 z-0">
             <Lottie 
               animationData={gradientAnimation} 
@@ -112,7 +118,7 @@ const Form = () => {
             <div className="text-center">
               <Check className="mx-auto text-green-500 mb-4" size={72} />
               <h3 className="text-2xl font-semibold text-white mb-4">Form Submitted Successfully!</h3>
-              <p className="text-gray-300">Thank you for providing your medical information.</p>
+              <p className="text-gray-300">Redirecting to Prescription Analyzer...</p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
