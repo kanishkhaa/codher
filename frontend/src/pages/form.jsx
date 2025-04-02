@@ -13,8 +13,8 @@ import {
   MapPin 
 } from 'lucide-react';
 import Lottie from "lottie-react";
-import robotAnimation from '../robot.json';
-import gradientAnimation from '../gradient.json';
+import robotAnimation from '../lotifi//robot.json';
+import gradientAnimation from '../lotifi/gradient.json';
 
 const Form = () => {
   const [formData, setFormData] = useState({

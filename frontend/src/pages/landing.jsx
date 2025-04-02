@@ -3,15 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Lottie from "lottie-react";
 import { Award, Shield, Zap, Globe, Heart, Cpu } from 'lucide-react';
-import healthAnimation from '../health-animation.json';
-import reminderAnimation from '../reminder-animation.json';
-import analyticsAnimation from '../analytics.json';
-import scanningAnimation from '../scanning.json';
-import vaultAnimation from '../vault.json';
-import QRAnimation from '../QR.json';
-import drugAnimation from '../drug.json';
-import insightsAnimation from '../insights.json';
-import analysisAnimation from '../analysis.json';
+import healthAnimation from '../lotifi/health-animation.json';
+import reminderAnimation from '../lotifi/reminder-animation.json';
+import analyticsAnimation from '../lotifi/analytics.json';
+import scanningAnimation from '../lotifi/scanning.json';
+import vaultAnimation from '../lotifi/vault.json';
+import QRAnimation from '../lotifi/QR.json';
+import drugAnimation from '../lotifi/drug.json';
+import insightsAnimation from '../lotifi/insights.json';
+import analysisAnimation from '../lotifi/analysis.json';
 
 // Logo Component
 const Logo = () => (
