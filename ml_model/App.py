@@ -9,152 +9,189 @@ import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from PIL import Image
 
 # Load the trained model and label encoders
-with open("/home/sbragul26/codher/ml_model/medicine_model.pkl", "rb") as model_file:
-    medicine_model = pickle.load(model_file)
+with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\medicine_model.pkl", "rb") as model_file:
+    model = pickle.load(model_file)
 
-with open("/home/sbragul26/codher/ml_model/label_encoders.pkl", "rb") as le_file:
+with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\label_encoders.pkl", "rb") as le_file:
     label_encoders = pickle.load(le_file)
 
 # Configure Google Generative AI API
 genai.configure(api_key="AIzaSyBZ0xQPAupZmcN6sH2Nv4pbudpimJMd_n0")
 
-# Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*", "allow_headers": ["Content-Type", "Authorization"], "supports_credentials": True}})
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "output"
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
+DATA_FOLDER = "data"
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'pdf'}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
+app.config["DATA_FOLDER"] = DATA_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(DATA_FOLDER, exist_ok=True)
+
+# File paths for persistent storage
+PRESCRIPTIONS_FILE = os.path.join(DATA_FOLDER, 'prescriptions.json')
+MEDICATIONS_FILE = os.path.join(DATA_FOLDER, 'medications.json')
+REMINDERS_FILE = os.path.join(DATA_FOLDER, 'reminders.json')
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def preprocess_image(image_path):
-    try:
-        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if image is None:
-            raise ValueError(f"Could not read image: {image_path}")
-        
-        image = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        processed = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2)
-        return processed
-    except Exception as e:
-        print(f"Image preprocessing error: {e}")
-        return None
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        raise ValueError(f"Could not read image: {image_path}")
+    image = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    processed = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 2)
+    return processed
 
 def extract_text(image_path):
-    try:
-        processed_image = preprocess_image(image_path)
-        if processed_image is None:
-            return "Could not process image"
-        
-        custom_config = r'--oem 3 --psm 6'
-        extracted_text = pytesseract.image_to_string(processed_image, config=custom_config)
-        return extracted_text.strip() or "No text extracted"
-    except Exception as e:
-        return f"OCR Error: {str(e)}"
+    processed_image = preprocess_image(image_path)
+    custom_config = r'--oem 3 --psm 6'
+    extracted_text = pytesseract.image_to_string(processed_image, config=custom_config)
+    return extracted_text.strip() or "No text extracted"
 
 def predict_generic_name(medicine_name):
-    try:
-        if medicine_name in label_encoders["MEDICINE_NAME"].classes_:
-            medicine_encoded = label_encoders["MEDICINE_NAME"].transform([medicine_name])
-            predicted_label = medicine_model.predict(pd.DataFrame({"MEDICINE_NAME": medicine_encoded}))
-            generic_name = label_encoders["GENERIC_NAME"].inverse_transform(predicted_label)[0]
-            return generic_name
-        else:
-            return "Unknown Medicine"
-    except Exception as e:
-        return f"Prediction Error: {str(e)}"
+    if medicine_name in label_encoders["MEDICINE_NAME"].classes_:
+        medicine_encoded = label_encoders["MEDICINE_NAME"].transform([medicine_name])
+        predicted_label = model.predict(pd.DataFrame({"MEDICINE_NAME": medicine_encoded}))
+        generic_name = label_encoders["GENERIC_NAME"].inverse_transform(predicted_label)[0]
+        return generic_name
+    return "Unknown Medicine"
 
 def organize_text_with_ai(text):
-    try:
-        if not text or text.startswith("OCR Error") or text == "No text extracted":
-            return "Unable to process prescription text"
+    model = genai.GenerativeModel("gemini-1.5-pro")
+    prompt = f"""
+    Organize the following prescription text into a structured format with clearly labeled sections:
+    - **Patient Information** (Name, Age, Gender if available)
+    - **Doctor Information** (Name, Hospital/Clinic, License Number if available)
+    - **Medications** (Medicine Name, Dosage, Frequency)
+    - **Special Instructions** (Dietary advice, warnings, or extra instructions)
+    Prescription Text: {text}
+    """
+    response = model.generate_content(prompt)
+    structured_text = response.text.strip() if response.text else "No response from AI."
+    
+    extracted_medicines = []
+    for line in structured_text.split('\n'):
+        if "Medicine Name" in line:
+            med_name = line.split("Medicine Name:")[-1].split(",")[0].strip()
+            extracted_medicines.append(med_name)
+    
+    generic_predictions = {med: predict_generic_name(med) for med in extracted_medicines}
+    return {"structured_text": structured_text, "generic_predictions": generic_predictions}
 
-        model = genai.GenerativeModel("gemini-1.5-pro")
-        prompt = f"""
-        Organize the following prescription text into a structured format with clearly labeled sections:
-        
-        - **Patient Information** (Name, Age, Gender if available)
-        - **Doctor Information** (Name, Hospital/Clinic, License Number if available)
-        - **Medications** (Medicine Name, Dosage, Frequency)
-        - **Special Instructions** (Dietary advice, warnings, or extra instructions)
-        - **Medication Details** (For each medication, provide Description, Caution, and Side Effects)
-        
-        Prescription Text: {text}
-        """
-        response = model.generate_content(prompt)
-        structured_text = response.text.strip() if response.text else "No response from AI."
-        
-        # Extract medicine names from AI response (simple approach: split by lines)
-        extracted_medicines = [line.strip() for line in structured_text.split('\n') if line and not line.startswith("-")]
-        
-        # Predict generic names
-        generic_predictions = {med: predict_generic_name(med) for med in extracted_medicines}
-        
-        return {"structured_text": structured_text, "generic_predictions": generic_predictions}
-    except Exception as e:
-        return {"error": f"AI Processing Error: {str(e)}"}
+def load_json(file_path, default=[]):
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    return default
+
+def save_json(file_path, data):
+    with open(file_path, 'w') as f:
+        json.dump(data, f, indent=4)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    print("Upload request received")
-    
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
     
     file = request.files['file']
+    if file.filename == '' or not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file"}), 400
     
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        
-        try:
-            file.save(filepath)
-            print(f"File saved: {filepath}")
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
 
-            extracted_text = extract_text(filepath)
-            print(f"Extracted Text: {extracted_text}")
+    extracted_text = extract_text(filepath)
+    structured_data = organize_text_with_ai(extracted_text)
 
-            structured_data = organize_text_with_ai(extracted_text)
-            print(f"Structured Data: {structured_data}")
+    # Load existing data
+    prescriptions = load_json(PRESCRIPTIONS_FILE)
+    medications = load_json(MEDICATIONS_FILE)
+    reminders = load_json(REMINDERS_FILE)
 
-            output_data = {
-                "filename": filename,
-                "extracted_text": extracted_text,
-                "structured_text": structured_data["structured_text"],
-                "generic_predictions": structured_data["generic_predictions"]
-            }
+    # Update prescriptions
+    new_prescription = {
+        "id": len(prescriptions) + 1,
+        "filename": filename,
+        "date": pd.Timestamp.now().strftime('%Y-%m-%d'),
+        "structured_text": structured_data["structured_text"],
+        "generic_predictions": structured_data["generic_predictions"]
+    }
+    prescriptions.append(new_prescription)
+    save_json(PRESCRIPTIONS_FILE, prescriptions)
 
-            json_filepath = os.path.join(app.config['OUTPUT_FOLDER'], f"{filename}.json")
-            with open(json_filepath, "w") as json_file:
-                json.dump(output_data, json_file, indent=4)
+    # Update medications
+    for med_name, generic_name in structured_data["generic_predictions"].items():
+        if not any(m['name'] == med_name for m in medications):
+            medications.append({
+                "id": len(medications) + 1,
+                "name": med_name,
+                "description": generic_name,
+                "caution": "Take as directed",
+                "sideEffects": "Consult doctor"
+            })
+    save_json(MEDICATIONS_FILE, medications)
 
-            return jsonify(output_data)
-        
-        except Exception as e:
-            print(f"Upload processing error: {e}")
-            return jsonify({"error": str(e)}), 500
+    # Update reminders
+    today = pd.Timestamp.now().strftime('%Y-%m-%d')
+    refill_date = (pd.Timestamp.now() + pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+    for i, (med_name, _) in enumerate(structured_data["generic_predictions"].items()):
+        reminders.append({
+            "id": len(reminders) + 1 + i,
+            "medication": med_name,
+            "title": f"Take {med_name}",
+            "date": today,
+            "time": f"{8 + i}:00",
+            "recurring": "daily",
+            "completed": False
+        })
+        reminders.append({
+            "id": len(reminders) + 1 + i + 100,
+            "medication": med_name,
+            "title": f"Refill {med_name}",
+            "date": refill_date,
+            "time": "09:00",
+            "recurring": "none",
+            "completed": False
+        })
+    save_json(REMINDERS_FILE, reminders)
 
-    return jsonify({"error": "File type not allowed"}), 400
+    return jsonify({
+        "filename": filename,
+        "extracted_text": extracted_text,
+        "structured_text": structured_data["structured_text"],
+        "generic_predictions": structured_data["generic_predictions"]
+    })
 
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+@app.route('/prescriptions', methods=['GET'])
+def get_prescriptions():
+    return jsonify(load_json(PRESCRIPTIONS_FILE))
 
-@app.route('/')
-def health_check():
-    return jsonify({"status": "Backend is running"}), 200
+@app.route('/medications', methods=['GET'])
+def get_medications():
+    return jsonify(load_json(MEDICATIONS_FILE))
+
+@app.route('/reminders', methods=['GET'])
+def get_reminders():
+    return jsonify(load_json(REMINDERS_FILE))
+
+@app.route('/reminders/<int:id>/complete', methods=['POST'])
+def complete_reminder(id):
+    reminders = load_json(REMINDERS_FILE)
+    for reminder in reminders:
+        if reminder['id'] == id:
+            reminder['completed'] = True
+            break
+    save_json(REMINDERS_FILE, reminders)
+    return jsonify({"status": "success"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
