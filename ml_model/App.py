@@ -9,6 +9,9 @@ import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
 
 # Load the trained model and label encoders
 with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\medicine_model.pkl", "rb") as model_file:
@@ -26,13 +29,16 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "output"
 DATA_FOLDER = "data"
+DOCS_FOLDER = "docs"
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'pdf'}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 app.config["DATA_FOLDER"] = DATA_FOLDER
+app.config["DOCS_FOLDER"] = DOCS_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(DATA_FOLDER, exist_ok=True)
+os.makedirs(DOCS_FOLDER, exist_ok=True)
 
 # File paths for persistent storage
 PRESCRIPTIONS_FILE = os.path.join(DATA_FOLDER, 'prescriptions.json')
@@ -192,6 +198,81 @@ def complete_reminder(id):
             break
     save_json(REMINDERS_FILE, reminders)
     return jsonify({"status": "success"})
+
+@app.route('/generate-prescription-doc', methods=['POST'])
+def generate_prescription_doc():
+    data = request.get_json()
+    patient = data.get('patient', {})
+    medications = data.get('medications', [])
+    prescriptions = data.get('prescriptions', [])
+    timestamp = data.get('timestamp', pd.Timestamp.now().strftime('%Y-%m-%d'))
+
+    # Generate PDF
+    file_name = f"prescription_{patient.get('n', 'Unknown').replace(' ', '_')}_{timestamp}.pdf"
+    file_path = os.path.join(app.config['DOCS_FOLDER'], file_name)
+    doc = SimpleDocTemplate(file_path, pagesize=letter)
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Title
+    story.append(Paragraph("Emergency Medical Information", styles['Title']))
+    story.append(Spacer(1, 12))
+
+    # Patient Info
+    story.append(Paragraph(f"PATIENT: {patient.get('n', 'Unknown')}", styles['Normal']))
+    if patient.get('g') != 'U':
+        story.append(Paragraph(f"GENDER: {patient.get('g')}", styles['Normal']))
+    if patient.get('e') != 'None':
+        story.append(Paragraph(f"EMERGENCY CONTACT: {patient.get('e')}", styles['Normal']))
+    story.append(Spacer(1, 12))
+
+    # Medications
+    story.append(Paragraph("MEDICATIONS:", styles['Heading2']))
+    for i, med in enumerate(medications, 1):
+        story.append(Paragraph(f"{i}. {med['n']}: {med['d']} ({med.get('date', 'N/A')})", styles['Normal']))
+    story.append(Spacer(1, 12))
+
+    # Prescription Details
+    story.append(Paragraph("PRESCRIPTION DETAILS:", styles['Heading2']))
+    for i, p in enumerate(prescriptions, 1):
+        # Use .get() to handle missing 'doctor' key with a default value
+        doctor = p.get('doctor', 'Unknown')
+        story.append(Paragraph(f"{i}. Date: {p.get('date', 'N/A')}, Doctor: {doctor}", styles['Normal']))
+        clean_text = p.get('structured_text', 'No details available').replace('**', '').replace('*', '')
+        story.append(Paragraph(clean_text, styles['Normal']))
+        story.append(Spacer(1, 6))
+    story.append(Spacer(1, 12))
+
+    # Footer
+    story.append(Paragraph(f"Generated: {timestamp}", styles['Normal']))
+
+    doc.build(story)
+    url = f"http://localhost:5000/docs/{file_name}"
+    return jsonify({"url": url})
+
+@app.route('/docs/<filename>', methods=['GET'])
+def serve_doc(filename):
+    return send_from_directory(app.config['DOCS_FOLDER'], filename)
+@app.route('/prescriptions/<int:id>', methods=['DELETE'])
+def delete_prescription(id):
+    prescriptions = load_json(PRESCRIPTIONS_FILE)
+    prescriptions = [p for p in prescriptions if p['id'] != id]
+    save_json(PRESCRIPTIONS_FILE, prescriptions)
+    return jsonify({"status": "success", "message": f"Prescription {id} deleted"})
+
+@app.route('/medications/<int:id>', methods=['DELETE'])
+def delete_medication(id):
+    medications = load_json(MEDICATIONS_FILE)
+    medications = [m for m in medications if m['id'] != id]
+    save_json(MEDICATIONS_FILE, medications)
+    return jsonify({"status": "success", "message": f"Medication {id} deleted"})
+
+@app.route('/reminders/<int:id>', methods=['DELETE'])
+def delete_reminder(id):
+    reminders = load_json(REMINDERS_FILE)
+    reminders = [r for r in reminders if r['id'] != id]
+    save_json(REMINDERS_FILE, reminders)
+    return jsonify({"status": "success", "message": f"Reminder {id} deleted"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

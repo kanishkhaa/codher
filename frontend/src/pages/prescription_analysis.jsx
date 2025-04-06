@@ -1,8 +1,9 @@
 import React, { useState, useRef, useContext } from 'react';
 import axios from 'axios';
-import { FileText, AlertTriangle, Upload, Clock, Sparkles, Stethoscope } from 'lucide-react';
+import { FileText, AlertTriangle, Upload, Clock, Sparkles, Stethoscope, AlertCircle, Trash2 } from 'lucide-react';
 import Sidebar from '../../components/sidebar';
 import { AppContext } from "../context/AppContext";
+import { QRCodeSVG } from 'qrcode.react'; 
 
 const PrescriptionAnalyzer = () => {
   const { 
@@ -10,7 +11,8 @@ const PrescriptionAnalyzer = () => {
     setPrescriptionHistory, 
     medicationData, 
     setMedicationData, 
-    setReminders 
+    setReminders,
+    deletePrescription
   } = useContext(AppContext);
 
   const [uploadedFile, setUploadedFile] = useState(null);
@@ -22,7 +24,59 @@ const PrescriptionAnalyzer = () => {
   const [wellnessTips, setWellnessTips] = useState('');
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [isGeneratingTips, setIsGeneratingTips] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrData, setQrData] = useState('');
+  const [selectedPrescription, setSelectedPrescription] = useState(null);
   const fileInputRef = useRef(null);
+
+  const generateEmergencyQR = async () => {
+    try {
+      const allMedications = [];
+      prescriptionHistory.forEach(p => {
+        const meds = medicationData.filter(med => p.structured_text.includes(med.name)).map(med => ({
+          n: med.name,
+          d: med.dosage.split(' (')[0],
+          date: p.date
+        }));
+        allMedications.push(...meds);
+      });
+
+      const uniqueMedications = Array.from(
+        new Map(allMedications.map(m => [`${m.n}-${m.d}`, m])).values()
+      );
+
+      const patientInfo = prescriptionHistory.length > 0
+        ? {
+            n: prescriptionHistory[0].structured_text?.match(/Name: ([^\n]*)/)?.[1]?.trim() || 'Unknown',
+            g: prescriptionHistory[0].structured_text?.match(/Gender: ([^\n]*)/)?.[1]?.trim() || 'U',
+            e: prescriptionHistory[0].structured_text?.match(/Emergency Contact: ([^\n]*)/)?.[1]?.trim() || 'None'
+          }
+        : { n: 'Unknown', g: 'U', e: 'None' };
+
+      const prescriptionData = {
+        patient: patientInfo,
+        medications: uniqueMedications,
+        prescriptions: prescriptionHistory.map(p => ({
+          date: p.date,
+          doctor: p.doctor,
+          structured_text: p.structured_text
+        })),
+        timestamp: new Date().toISOString().slice(0, 10)
+      };
+
+      const response = await axios.post('http://localhost:5000/generate-prescription-doc', prescriptionData, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const documentUrl = response.data.url;
+      setQrData(documentUrl);
+      setShowQRModal(true);
+      console.log('QR URL:', documentUrl);
+    } catch (error) {
+      console.error('QR Generation Error:', error);
+      setErrorMessage('Failed to generate Emergency QR code: ' + error.message);
+    }
+  };
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -40,7 +94,6 @@ const PrescriptionAnalyzer = () => {
       try {
         const response = await axios.post('http://localhost:5000/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 30000,
         });
 
         if (response.data.error) {
@@ -50,10 +103,10 @@ const PrescriptionAnalyzer = () => {
         setStructuredText(response.data.structured_text || 'Unable to structure text');
         const parsedMedications = parseMedicationData(response.data.structured_text);
 
-        // Update shared medication data
         setMedicationData(prev => {
           const existingNames = prev.map(med => med.name);
           const uniqueNewMeds = parsedMedications.filter(med => !existingNames.includes(med.name));
+          console.log('Parsed Medications:', parsedMedications); // Debug
           return [...prev, ...uniqueNewMeds];
         });
 
@@ -69,7 +122,6 @@ const PrescriptionAnalyzer = () => {
         };
         setPrescriptionHistory(prev => [...prev, newPrescription]);
 
-        // Generate and update reminders
         const medications = parseMedicationData(response.data.structured_text);
         const today = new Date();
         const newReminders = medications.map((med, index) => ({
@@ -368,6 +420,93 @@ const PrescriptionAnalyzer = () => {
       default: return 'text-gray-400';
     }
   };
+  const handleDownloadQR = () => {
+    try {
+      const qrCodeElement = document.getElementById('emergency-qr-code');
+      if (!qrCodeElement) {
+        throw new Error('QR Code element not found');
+      }
+
+      const canvas = document.createElement('canvas');
+      const canvasWidth = 1024;
+      const canvasHeight = 768;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      const svgData = new XMLSerializer().serializeToString(qrCodeElement);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const DOMURL = window.URL || window.webkitURL || window;
+      const url = DOMURL.createObjectURL(svgBlob);
+
+      const img = new Image();
+      img.onload = () => {
+        const qrSize = 512;
+        const qrPadding = (canvasWidth - qrSize) / 2;
+        ctx.drawImage(img, qrPadding, 50, qrSize, qrSize);
+
+        ctx.font = 'bold 32px Arial';
+        ctx.fillStyle = 'black';
+        ctx.textAlign = 'center';
+        ctx.fillText('Emergency Medical Information', canvasWidth / 2, 30);
+
+        ctx.font = '16px Arial';
+        ctx.fillText('Scan to view detailed prescription document:', canvasWidth / 2, qrSize + 80);
+        ctx.fillText(qrData, canvasWidth / 2, qrSize + 100);
+
+        const dataURL = canvas.toDataURL('image/png');
+        const downloadLink = document.createElement('a');
+        downloadLink.href = dataURL;
+        downloadLink.download = 'Emergency-Medical-QR.png';
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+        DOMURL.revokeObjectURL(url);
+      };
+
+      img.onerror = (err) => {
+        console.error('Image loading error:', err);
+        throw new Error('Failed to generate QR image');
+      };
+
+      img.src = url;
+    } catch (error) {
+      console.error('QR Download Error:', error);
+      setErrorMessage('Error downloading QR code: ' + error.message);
+    }
+  };
+
+  const decodeQRContent = (qrData) => {
+    return `Scan to view detailed prescription document:\n${qrData}`;
+  };
+
+  const handlePrescriptionClick = (prescription) => {
+    setSelectedPrescription(prescription);
+  };
+
+  const handleDeletePrescription = async (prescriptionId, event) => {
+    event.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this prescription? This action cannot be undone.')) {
+      const success = await deletePrescription(prescriptionId);
+      if (success) {
+        if (selectedPrescription?.id === prescriptionId) {
+          setSelectedPrescription(null);
+        }
+        setErrorMessage('');
+        if (structuredText && prescriptionHistory.find(p => p.id === prescriptionId)?.structured_text === structuredText) {
+          setStructuredText('');
+          setAiSummary('');
+          setWellnessTips('');
+          setProcessingStatus('');
+        }
+      } else {
+        setErrorMessage('Failed to delete prescription. Please try again.');
+      }
+    }
+  };
 
   return (
     <div className="bg-gradient-to-br from-gray-900 via-slate-900 to-black text-white min-h-screen flex">
@@ -384,6 +523,14 @@ const PrescriptionAnalyzer = () => {
                 <p className="text-gray-400 text-sm tracking-wide">Analyze and understand your prescriptions with ease</p>
               </div>
               <div className="flex items-center space-x-4">
+                <button
+                  onClick={generateEmergencyQR}
+                  className="bg-gradient-to-r from-red-600 to-orange-600 text-white px-5 py-2 rounded-full hover:scale-105 transition-transform shadow-lg flex items-center"
+                  title="Generate QR code for emergency access to your medical information"
+                >
+                  <AlertCircle className="w-5 h-5 mr-2" />
+                  Emergency QR
+                </button>
                 <input 
                   type="text" 
                   placeholder="Search prescriptions" 
@@ -398,6 +545,84 @@ const PrescriptionAnalyzer = () => {
               </div>
             </div>
           </div>
+
+          {showQRModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+              <div className="bg-gray-800/90 rounded-2xl p-6 max-w-md w-full mx-4 border border-gray-700/30 shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-orange-500">
+                    Emergency Medical QR
+                  </h3>
+                  <button 
+                    onClick={() => setShowQRModal(false)}
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="bg-white p-6 rounded-lg flex flex-col items-center mb-4">
+                  <QRCodeSVG 
+                    id="emergency-qr-code"
+                    value={qrData}
+                    size={256}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                    level="H"
+                    includeMargin={true}
+                    title="Medical Emergency Information"
+                  />
+                  <p className="text-black text-xs mt-2 font-bold">Scan to view detailed document</p>
+                </div>
+                <p className="text-gray-400 text-sm text-center mb-4">
+                  Scan this QR code to access a detailed PDF of your prescription history.
+                </p>
+                <div className="flex space-x-4">
+                  <button 
+                    onClick={handleDownloadQR}
+                    className="flex-1 bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-2 px-4 rounded-xl hover:scale-105 transition-transform flex items-center justify-center"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                    Download QR
+                  </button>
+                  <button 
+                    onClick={() => setShowQRModal(false)}
+                    className="flex-1 bg-gradient-to-r from-red-600 to-orange-600 text-white py-2 px-4 rounded-xl hover:scale-105 transition-transform"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {selectedPrescription && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+              <div className="bg-gray-800/90 rounded-2xl p-6 max-w-2xl w-full mx-4 border border-gray-700/30 shadow-2xl max-h-[80vh] overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500">
+                    Prescription Details - {selectedPrescription.name}
+                  </h3>
+                  <button 
+                    onClick={() => setSelectedPrescription(null)}
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="text-gray-300 prose prose-invert max-w-none">
+                  {formatStructuredText(selectedPrescription.structured_text)}
+                </div>
+                <button 
+                  onClick={() => setSelectedPrescription(null)}
+                  className="mt-4 w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-2 px-4 rounded-xl hover:scale-105 transition-transform"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-1 px-8 pb-8 overflow-hidden">
             <div className="flex-1 overflow-y-auto pr-6">
@@ -455,26 +680,24 @@ const PrescriptionAnalyzer = () => {
                             <p className="text-gray-300 mb-4">{med.description}</p>
                             <div className="text-blue-300 font-medium mb-1 text-sm uppercase tracking-wider">Cautions:</div>
                             <ul className="list-disc pl-5 mb-4">
-                            {Array.isArray(med.cautions) 
-  ? med.cautions.map((caution, idx) => (
-      <li key={idx} className="text-gray-300 mb-1">{caution}</li>
-    )) 
-  : <li className="text-gray-300 mb-1">No cautions available</li>}
-
+                              {Array.isArray(med.cautions) 
+                                ? med.cautions.map((caution, idx) => (
+                                    <li key={idx} className="text-gray-300 mb-1">{caution}</li>
+                                  )) 
+                                : <li className="text-gray-300 mb-1">No cautions available</li>}
                             </ul>
                             <div className="text-blue-300 font-medium mb-1 text-sm uppercase tracking-wider">Side Effects:</div>
                             <div className="flex flex-wrap gap-2">
-  {Array.isArray(med.sideEffects) && med.sideEffects.length > 0 ? (
-    med.sideEffects.map((effect, idx) => (
-      <span key={idx} className="bg-gray-700/70 px-3 py-1 rounded-full text-gray-300 text-sm">
-        {effect}
-      </span>
-    ))
-  ) : (
-    <span className="text-gray-300 text-sm">No side effects available</span>
-  )}
-</div>
-
+                              {Array.isArray(med.sideEffects) && med.sideEffects.length > 0 ? (
+                                med.sideEffects.map((effect, idx) => (
+                                  <span key={idx} className="bg-gray-700/70 px-3 py-1 rounded-full text-gray-300 text-sm">
+                                    {effect}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-gray-300 text-sm">No side effects available</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -563,11 +786,16 @@ const PrescriptionAnalyzer = () => {
                         <th className="text-left py-3 px-4 text-gray-400 font-medium">Date</th>
                         <th className="text-left py-3 px-4 text-gray-400 font-medium">Doctor</th>
                         <th className="text-left py-3 px-4 text-gray-400 font-medium">Status</th>
+                        <th className="text-left py-3 px-4 text-gray-400 font-medium">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {prescriptionHistory.map((prescription) => (
-                        <tr key={prescription.id} className="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer">
+                        <tr 
+                          key={prescription.id} 
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer"
+                          onClick={() => handlePrescriptionClick(prescription)}
+                        >
                           <td className="py-3 px-4 text-gray-300">{prescription.name}</td>
                           <td className="py-3 px-4 text-gray-300">{prescription.date}</td>
                           <td className="py-3 px-4 text-gray-300">{prescription.doctor}</td>
@@ -575,6 +803,15 @@ const PrescriptionAnalyzer = () => {
                             <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm">
                               {prescription.status}
                             </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <button
+                              onClick={(event) => handleDeletePrescription(prescription.id, event)}
+                              className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                              title="Delete prescription"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -587,7 +824,6 @@ const PrescriptionAnalyzer = () => {
                 )}
               </div>
             </div>
-
             <div className="w-80 flex-shrink-0 overflow-y-auto pl-6">
               <div className="sticky top-0 pt-8">
                 <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl mb-6">

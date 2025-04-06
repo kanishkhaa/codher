@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom'; // Add this import
+import React, { useState, useContext } from 'react'; // Ensure useContext is imported
+import { useNavigate } from 'react-router-dom';
 import { 
   Check, 
   AlertCircle, 
@@ -13,25 +13,29 @@ import {
   MapPin 
 } from 'lucide-react';
 import Lottie from "lottie-react";
-import robotAnimation from '../lotifi//robot.json';
+import robotAnimation from '../lotifi/robot.json';
 import gradientAnimation from '../lotifi/gradient.json';
+import { AppContext } from "../context/AppContext";
 
 const Form = () => {
+  // Use useContext to access AppContext values
+  const { userData, updateUserData } = useContext(AppContext); 
+  
   const [formData, setFormData] = useState({
-    fullName: '',
-    dob: '',
-    gender: '',
-    medicalConditions: '',
-    medications: '',
-    allergies: '',
-    emergencyContactName: '',
-    emergencyContactNumber: '',
-    preferredPharmacy: ''
+    fullName: userData.fullName || '',
+    dob: userData.dob || '',
+    gender: userData.gender || '',
+    medicalConditions: userData.medicalConditions || '',
+    medications: userData.medications || '',
+    allergies: userData.allergies || '',
+    emergencyContactName: userData.emergencyContactName || '',
+    emergencyContactNumber: userData.emergencyContactNumber || '',
+    preferredPharmacy: userData.preferredPharmacy || ''
   });
 
   const [errors, setErrors] = useState({});
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const navigate = useNavigate(); // Add navigation hook
+  const navigate = useNavigate();
 
   const validateForm = () => {
     const newErrors = {};
@@ -66,13 +70,15 @@ const Form = () => {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (validateForm()) {
+      // Update the context with form data
+      updateUserData(formData);
       setIsSubmitted(true);
       console.log('Form submitted:', formData);
       
-      // Add navigation with a slight delay to show success message
+      // Navigate to profile page instead of prescription
       setTimeout(() => {
-        navigate('/prescription');
-      }, 1500); // 1.5 second delay before redirecting
+        navigate('/profile');
+      }, 1500);
     }
   };
 
@@ -118,7 +124,7 @@ const Form = () => {
             <div className="text-center">
               <Check className="mx-auto text-green-500 mb-4" size={72} />
               <h3 className="text-2xl font-semibold text-white mb-4">Form Submitted Successfully!</h3>
-              <p className="text-gray-300">Redirecting to Prescription Analyzer...</p>
+              <p className="text-gray-300">Redirecting to your profile...</p>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -190,6 +196,16 @@ const Form = () => {
                 value={formData.allergies}
                 onChange={handleChange}
                 placeholder="Allergies (Drug/Food)"
+                className="w-full px-4 py-3 bg-[#334155] text-white rounded-lg"
+              />
+
+              {/* Emergency Contact Name */}
+              <input
+                type="text"
+                name="emergencyContactName"
+                value={formData.emergencyContactName}
+                onChange={handleChange}
+                placeholder="Emergency Contact Name"
                 className="w-full px-4 py-3 bg-[#334155] text-white rounded-lg"
               />
 
