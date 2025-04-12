@@ -3,14 +3,14 @@ import axios from 'axios';
 import { FileText, AlertTriangle, Upload, Clock, Sparkles, Stethoscope, AlertCircle, Trash2 } from 'lucide-react';
 import Sidebar from '../../components/sidebar';
 import { AppContext } from "../context/AppContext";
-import { QRCodeSVG } from 'qrcode.react'; 
+import { QRCodeSVG } from 'qrcode.react';
 
 const PrescriptionAnalyzer = () => {
-  const { 
-    prescriptionHistory, 
-    setPrescriptionHistory, 
-    medicationData, 
-    setMedicationData, 
+  const {
+    prescriptionHistory,
+    setPrescriptionHistory,
+    medicationData,
+    setMedicationData,
     setReminders,
     deletePrescription
   } = useContext(AppContext);
@@ -27,312 +27,80 @@ const PrescriptionAnalyzer = () => {
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrData, setQrData] = useState('');
   const [selectedPrescription, setSelectedPrescription] = useState(null);
+  const [currentMedications, setCurrentMedications] = useState([]);
   const fileInputRef = useRef(null);
 
-  const generateEmergencyQR = async () => {
+  // Fetch drug info from RxNorm API
+  const fetchDrugInfo = async (drugName) => {
     try {
-      const allMedications = [];
-      prescriptionHistory.forEach(p => {
-        const meds = medicationData.filter(med => p.structured_text.includes(med.name)).map(med => ({
-          n: med.name,
-          d: med.dosage.split(' (')[0],
-          date: p.date
-        }));
-        allMedications.push(...meds);
-      });
-
-      const uniqueMedications = Array.from(
-        new Map(allMedications.map(m => [`${m.n}-${m.d}`, m])).values()
-      );
-
-      const patientInfo = prescriptionHistory.length > 0
-        ? {
-            n: prescriptionHistory[0].structured_text?.match(/Name: ([^\n]*)/)?.[1]?.trim() || 'Unknown',
-            g: prescriptionHistory[0].structured_text?.match(/Gender: ([^\n]*)/)?.[1]?.trim() || 'U',
-            e: prescriptionHistory[0].structured_text?.match(/Emergency Contact: ([^\n]*)/)?.[1]?.trim() || 'None'
-          }
-        : { n: 'Unknown', g: 'U', e: 'None' };
-
-      const prescriptionData = {
-        patient: patientInfo,
-        medications: uniqueMedications,
-        prescriptions: prescriptionHistory.map(p => ({
-          date: p.date,
-          doctor: p.doctor,
-          structured_text: p.structured_text
-        })),
-        timestamp: new Date().toISOString().slice(0, 10)
+      const url = `https://rxnav.nlm.nih.gov/REST/rxcui.json?name=${encodeURIComponent(drugName)}`;
+      const response = await axios.get(url, { timeout: 10000 });
+      const rxcui = response.data.idGroup.rxnormId?.[0];
+      if (!rxcui) {
+        throw new Error(`No RxCUI found for ${drugName}`);
+      }
+      return {
+        name: drugName,
+        description: `${drugName} is a medication used as prescribed by your doctor.`
       };
-
-      const response = await axios.post('http://localhost:5000/generate-prescription-doc', prescriptionData, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const documentUrl = response.data.url;
-      setQrData(documentUrl);
-      setShowQRModal(true);
-      console.log('QR URL:', documentUrl);
     } catch (error) {
-      console.error('QR Generation Error:', error);
-      setErrorMessage('Failed to generate Emergency QR code: ' + error.message);
-    }
-  };
-
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      setUploadedFile(file);
-      setProcessingStatus('Uploading and processing...');
-      setErrorMessage('');
-      setStructuredText('');
-      setAiSummary('');
-      setWellnessTips('');
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      try {
-        const response = await axios.post('http://localhost:5000/upload', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        });
-
-        if (response.data.error) {
-          throw new Error(response.data.error);
-        }
-
-        setStructuredText(response.data.structured_text || 'Unable to structure text');
-        const parsedMedications = parseMedicationData(response.data.structured_text);
-
-        setMedicationData(prev => {
-          const existingNames = prev.map(med => med.name);
-          const uniqueNewMeds = parsedMedications.filter(med => !existingNames.includes(med.name));
-          console.log('Parsed Medications:', parsedMedications); // Debug
-          return [...prev, ...uniqueNewMeds];
-        });
-
-        const newPrescription = {
-          id: Date.now(),
-          name: response.data.filename || file.name,
-          date: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
-          doctor: response.data.structured_text.match(/\*\*Doctor Information:\*\*[\s\S]*?Name: ([^\n]*)/)?.[1]?.trim() || 'Unknown',
-          status: 'Analyzed',
-          rawData: response.data,
-          structured_text: response.data.structured_text,
-          generic_predictions: response.data.generic_predictions,
-        };
-        setPrescriptionHistory(prev => [...prev, newPrescription]);
-
-        const medications = parseMedicationData(response.data.structured_text);
-        const today = new Date();
-        const newReminders = medications.map((med, index) => ({
-          id: Date.now() + index,
-          medication: med.name,
-          title: `Take ${med.name}`,
-          description: med.dosage || 'As prescribed',
-          date: today.toISOString().split('T')[0],
-          time: `${8 + index}:00`,
-          recurring: 'daily',
-          completed: false,
-          priority: 'medium',
-          takenHistory: [],
-        }));
-
-        const refillDate = new Date();
-        refillDate.setDate(refillDate.getDate() + 30);
-        medications.forEach((med, index) => {
-          newReminders.push({
-            id: Date.now() + 100 + index,
-            medication: med.name,
-            title: `Refill ${med.name}`,
-            description: 'Contact pharmacy for refill',
-            date: refillDate.toISOString().split('T')[0],
-            time: '09:00',
-            recurring: 'none',
-            completed: false,
-            priority: 'medium',
-            takenHistory: [],
-          });
-        });
-
-        setReminders(prev => [...prev, ...newReminders]);
-        setProcessingStatus('Processing complete');
-      } catch (error) {
-        console.error('Upload Error:', error);
-        setErrorMessage(error.message);
-        setProcessingStatus('Error processing prescription');
-      }
-    }
-  };
-
-  const generateAiSummary = async () => {
-    if (!prescriptionHistory.length || !structuredText) {
-      setErrorMessage('No prescription data available for summarization');
-      return;
-    }
-
-    setIsSummarizing(true);
-    try {
-      const latestPrescription = prescriptionHistory[prescriptionHistory.length - 1];
-      const payload = {
-        structured_text: structuredText,
-        medications: medicationData,
-        raw_data: latestPrescription.rawData
+      console.error(`Error fetching RxNorm data for ${drugName}:`, error);
+      return {
+        name: drugName,
+        description: `${drugName} is a medication used as prescribed (not found in RxNorm).`
       };
-
-      const response = await axios.post('http://localhost:5000/generate-summary', payload, {
-        timeout: 30000
-      });
-
-      if (response.data.error) {
-        throw new Error(response.data.error);
-      }
-
-      setAiSummary(response.data.summary);
-    } catch (error) {
-      console.error('Summary Generation Error:', error);
-      generateLocalSummary();
-    } finally {
-      setIsSummarizing(false);
     }
   };
 
-  const generateLocalSummary = () => {
-    if (!medicationData.length) {
-      setAiSummary('No medication data available to summarize.');
-      return;
-    }
-
-    const patientNameMatch = structuredText.match(/\*\*Patient Information:\*\*[\s\S]*?Name: ([^\n]*)/);
-    const patientName = patientNameMatch ? patientNameMatch[1].trim() : 'Patient';
-
-    const doctorNameMatch = structuredText.match(/\*\*Doctor Information:\*\*[\s\S]*?Name: ([^\n]*)/);
-    const doctorName = doctorNameMatch ? doctorNameMatch[1].trim() : 'Unknown Doctor';
-
-    const dateMatch = structuredText.match(/Date: ([^\n]*)/);
-    const prescriptionDate = dateMatch ? dateMatch[1].trim() : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-    const genderMatch = structuredText.match(/Gender: ([^\n]*)/);
-    const patientGender = genderMatch ? `(${genderMatch[1].trim().charAt(0)})` : '';
-
-    const highRiskInteractions = medicationData.some(med => 
-      med.interactions && med.interactions.some(interaction => interaction.severity === 'high')
-    );
-
-    let summary = '';
-    summary += `Patient: ${patientName} ${patientGender}\n`;
-    summary += `Date: ${prescriptionDate}\n`;
-    summary += `Physician: Dr. ${doctorName}\n`;
-    summary += `Medications:\n`;
-
-    medicationData.forEach((med, index) => {
-      const superscriptNumbers = ['¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹', '¹⁰'];
-      const medNumber = superscriptNumbers[index] || `${index + 1}`;
-      const dosageText = med.dosage || 'As prescribed';
-      summary += `  ${med.name}${medNumber}: ${dosageText}\n`;
-    });
-
-    if (highRiskInteractions) {
-      summary += `Alert: High-risk interactions detected - consult your doctor\n`;
-    }
-
-    summary += `Tip: Take medications as prescribed and stay hydrated`;
-    setAiSummary(summary);
-  };
-
-  const generateWellnessTips = async () => {
-    if (!prescriptionHistory.length || !structuredText) {
-      setErrorMessage('No prescription data available for generating tips');
-      return;
-    }
-
-    setIsGeneratingTips(true);
-    try {
-      const latestPrescription = prescriptionHistory[prescriptionHistory.length - 1];
-      const payload = {
-        structured_text: structuredText,
-        medications: medicationData,
-        raw_data: latestPrescription.rawData
-      };
-
-      const response = await axios.post('http://localhost:5000/generate-wellness-tips', payload, {
-        timeout: 30000
-      });
-
-      if (response.data.error) {
-        throw new Error(response.data.error);
-      }
-
-      setWellnessTips(response.data.tips);
-    } catch (error) {
-      console.error('Wellness Tips Generation Error:', error);
-      generateLocalWellnessTips();
-    } finally {
-      setIsGeneratingTips(false);
-    }
-  };
-
-  const generateLocalWellnessTips = () => {
-    if (!medicationData.length) {
-      setWellnessTips('No medication data available to generate tips.');
-      return;
-    }
-
-    let tips = "Wellness Tips\n\n";
-    tips += "• Take medications exactly as prescribed\n";
-    tips += "• Stay hydrated throughout the day\n";
-    tips += "• Maintain a balanced diet rich in fruits and vegetables\n";
-    tips += "• Get adequate rest and sleep\n";
-
-    medicationData.forEach(med => {
-      if (med.name.toLowerCase().includes("antibiot")) {
-        tips += "• Complete the full course of antibiotics even if you feel better\n";
-      }
-      if (med.sideEffects.includes("Drowsiness")) {
-        tips += "• Avoid driving or operating heavy machinery if experiencing drowsiness\n";
-      }
-      if (med.sideEffects.includes("Nausea")) {
-        tips += "• Take medication with food if experiencing nausea\n";
-      }
-    });
-
-    setWellnessTips(tips);
-  };
-
-  const parseMedicationData = (text) => {
+  const parseMedicationData = async (text) => {
     if (!text) return [];
-    
+
     const medications = [];
-    const medicationSection = text.split('Medications:')[1]?.split('Special Instructions:')[0];
-    
-    if (!medicationSection) return [];
-    
-    const medicationRegex = /\*\s\*\*(\d+)\)\s([^:]+):\*\*\s(.+?)(?=\*\s\*\*|\*\sSpecial|$)/gs;
-    let match;
-    
-    while ((match = medicationRegex.exec(medicationSection)) !== null) {
+    const medicationSectionMatch = text.match(/\*\*Medications:\*\*\n([\s\S]*?)(?:\n\n\*\*Special Instructions:\*\*|\n\nNote:|$)/i);
+    const medicationSection = medicationSectionMatch ? medicationSectionMatch[1] : '';
+    if (!medicationSection.trim()) return [];
+
+    const medicationEntries = medicationSection.split('\n').filter(line => line.trim().startsWith('* **')).map(line => line.trim());
+
+    for (let i = 0; i < medicationEntries.length; i++) {
+      let entry = medicationEntries[i];
+      entry = entry.replace(/\*+\s*/g, '').trim();
+      if (!entry) continue;
+
+      const medicationRegex = /^\s*(.+?)(?:\s*\(([^)]+)\))?:\s*([^:]+)$/;
+      const match = entry.match(medicationRegex);
+      if (!match) {
+        console.warn(`Skipping malformed medication entry: ${entry}`);
+        continue;
+      }
+
+      let drugName = match[1].trim();
+      const composition = match[2] ? match[2].trim() : '';
+      const dosage = match[3].trim();
+
+      const namesToTry = composition ? [composition, drugName] : [drugName];
+      let drugInfo = null;
+
+      for (const name of namesToTry) {
+        drugInfo = await fetchDrugInfo(name);
+        if (!drugInfo.description.includes('not found in RxNorm')) {
+          drugName = name;
+          break;
+        }
+      }
+
       medications.push({
-        id: match[1],
-        name: match[2].trim(),
-        dosage: match[3].trim(),
-        description: getRandomDrugDescription(match[2].trim()),
+        id: `${i + 1}`,
+        name: drugName,
+        dosage: dosage,
+        description: drugInfo.description,
         cautions: getRandomDrugCautions(),
         sideEffects: getRandomSideEffects(),
         interactions: getRandomInteractions()
       });
     }
-    
-    return medications;
-  };
 
-  const getRandomDrugDescription = (drugName) => {
-    const descriptions = {
-      'Abciximab': 'A platelet aggregation inhibitor primarily used during and after coronary artery procedures to prevent blood clots.',
-      'Vomilast': 'A combination medication containing Doxylamine, Pyridoxine, and Folic Acid for nausea and vomiting.',
-      'Zoclar 500': 'Clarithromycin, a macrolide antibiotic for bacterial infections.',
-      'Gestakind 10/SR': 'Isoxsuprine, a vasodilator improving blood flow.'
-    };
-    const baseName = drugName.split('(')[0].trim();
-    return descriptions[baseName] || `${drugName} is used as prescribed by your doctor.`;
+    return medications;
   };
 
   const getRandomDrugCautions = () => {
@@ -370,30 +138,324 @@ const PrescriptionAnalyzer = () => {
       [];
   };
 
+  const generateEmergencyQR = async () => {
+    try {
+      const allMedications = currentMedications.map(med => ({
+        n: med.name,
+        d: med.dosage,
+        date: new Date().toISOString().slice(0, 10)
+      }));
+
+      const patientInfo = structuredText
+        ? {
+            n: structuredText.match(/Name: ([^\n]*)/)?.[1]?.trim() || 'Unknown',
+            g: structuredText.match(/Gender: ([^\n]*)/)?.[1]?.trim() || 'U',
+            e: structuredText.match(/Emergency Contact: ([^\n]*)/)?.[1]?.trim() || 'None'
+          }
+        : { n: 'Unknown', g: 'U', e: 'None' };
+
+      const prescriptionData = {
+        patient: patientInfo,
+        medications: allMedications,
+        prescriptions: [{
+          date: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+          doctor: structuredText.match(/\*\*Doctor Information:\*\*[\s\S]*?Name: ([^\n]*)/)?.[1]?.trim() || 'Unknown',
+          structured_text: structuredText
+        }],
+        timestamp: new Date().toISOString().slice(0, 10)
+      };
+
+      const response = await axios.post('http://localhost:5000/generate-prescription-doc', prescriptionData, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      setQrData(response.data.url);
+      setShowQRModal(true);
+    } catch (error) {
+      console.error('QR Generation Error:', error);
+      setErrorMessage('Failed to generate Emergency QR code: ' + error.message);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setUploadedFile(file);
+    setProcessingStatus('Uploading and processing...');
+    setErrorMessage('');
+    setStructuredText('');
+    setAiSummary('');
+    setWellnessTips('');
+    setCurrentMedications([]);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await axios.post('http://localhost:5000/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (response.data.error) throw new Error(response.data.error);
+
+      setStructuredText(response.data.structured_text || 'Unable to structure text');
+      const parsedMedications = await parseMedicationData(response.data.structured_text);
+
+      if (parsedMedications.length === 0) {
+        setErrorMessage('No medications found in the prescription.');
+        setProcessingStatus('Processing complete');
+        return;
+      }
+
+      setCurrentMedications(parsedMedications);
+      setMedicationData(prev => {
+        const existingNames = prev.map(med => med.name);
+        const uniqueNewMeds = parsedMedications.filter(med => !existingNames.includes(med.name));
+        return [...prev, ...uniqueNewMeds];
+      });
+
+      const newPrescription = {
+        id: Date.now(),
+        name: response.data.filename || file.name,
+        date: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+        doctor: response.data.structured_text.match(/\*\*Doctor Information:\*\*[\s\S]*?Name: ([^\n]*)/)?.[1]?.trim() || 'Unknown',
+        status: 'Analyzed',
+        rawData: response.data,
+        structured_text: response.data.structured_text,
+        generic_predictions: response.data.generic_predictions,
+      };
+      setPrescriptionHistory(prev => [...prev, newPrescription]);
+
+      const today = new Date();
+      const newReminders = parsedMedications.map((med, index) => ({
+        id: Date.now() + index,
+        medication: med.name,
+        title: `Take ${med.name}`,
+        description: med.dosage || 'As prescribed',
+        date: today.toISOString().split('T')[0],
+        time: `${8 + index}:00`,
+        recurring: 'daily',
+        completed: false,
+        priority: 'medium',
+        takenHistory: [],
+      }));
+
+      const refillDate = new Date();
+      refillDate.setDate(refillDate.getDate() + 30);
+      parsedMedications.forEach((med, index) => {
+        newReminders.push({
+          id: Date.now() + 100 + index,
+          medication: med.name,
+          title: `Refill ${med.name}`,
+          description: 'Contact pharmacy for refill',
+          date: refillDate.toISOString().split('T')[0],
+          time: '09:00',
+          recurring: 'none',
+          completed: false,
+          priority: 'medium',
+          takenHistory: [],
+        });
+      });
+
+      setReminders(prev => [...prev, ...newReminders]);
+      setProcessingStatus('Processing complete');
+    } catch (error) {
+      console.error('Upload Error:', error);
+      setErrorMessage(error.message);
+      setProcessingStatus('Error processing prescription');
+    }
+  };
+
+  const generateAiSummary = async () => {
+    if (!structuredText || !currentMedications.length) {
+      setErrorMessage('No prescription data available for summarization');
+      return;
+    }
+
+    setIsSummarizing(true);
+    try {
+      const payload = {
+        structured_text: structuredText,
+        medications: currentMedications,
+      };
+
+      const response = await axios.post('http://localhost:5000/generate-summary', payload, {
+        timeout: 30000
+      });
+
+      if (response.data.error) throw new Error(response.data.error);
+      setAiSummary(response.data.summary);
+    } catch (error) {
+      console.error('Summary Generation Error:', error);
+      generateLocalSummary();
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+  const generateLocalSummary = () => {
+    if (!currentMedications.length) {
+      setAiSummary('No medication data available to summarize.');
+      return;
+    }
+
+    const patientNameMatch = structuredText.match(/\*\*Patient Information:\*\*[\s\S]*?Name: ([^\n]*)/);
+    const patientName = patientNameMatch ? patientNameMatch[1].trim() : 'Patient';
+    const doctorNameMatch = structuredText.match(/\*\*Doctor Information:\*\*[\s\S]*?Name: ([^\n]*)/);
+    const doctorName = doctorNameMatch ? doctorNameMatch[1].trim() : 'Unknown Doctor';
+    const dateMatch = structuredText.match(/Next Review Date: ([^\n]*)/);
+    const prescriptionDate = dateMatch ? dateMatch[1].trim() : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const genderMatch = structuredText.match(/Gender: ([^\n]*)/);
+    const patientGender = genderMatch ? `(${genderMatch[1].trim().charAt(0)})` : '';
+
+    let summary = '';
+    summary += `Patient: ${patientName} ${patientGender}\n`;
+    summary += `Date: ${prescriptionDate}\n`;
+    summary += `Physician: Dr. ${doctorName}\n`;
+    summary += `Medications:\n`;
+
+    currentMedications.forEach((med, index) => {
+      const superscriptNumbers = ['¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹', '¹⁰'];
+      const medNumber = superscriptNumbers[index] || `${index + 1}`;
+      const dosageText = med.dosage || 'As prescribed';
+      summary += `  ${med.name}${medNumber}: ${dosageText}\n`;
+    });
+
+    const hasInteractions = currentMedications.some(med => med.interactions?.length > 0);
+    if (hasInteractions) {
+      summary += `Alert: Potential drug interactions detected - consult your doctor\n`;
+    }
+
+    summary += `Tip: Follow your doctor's instructions carefully`;
+    setAiSummary(summary);
+  };
+
+  const generateWellnessTips = async () => {
+    if (!structuredText || !currentMedications.length) {
+      setErrorMessage('No prescription data available for generating tips');
+      return;
+    }
+
+    setIsGeneratingTips(true);
+    try {
+      const payload = {
+        structured_text: structuredText,
+        medications: currentMedications,
+      };
+
+      const response = await axios.post('http://localhost:5000/generate-wellness-tips', payload, {
+        timeout: 30000
+      });
+
+      if (response.data.error) throw new Error(response.data.error);
+      setWellnessTips(response.data.tips);
+    } catch (error) {
+      console.error('Wellness Tips Generation Error:', error);
+      generateLocalWellnessTips();
+    } finally {
+      setIsGeneratingTips(false);
+    }
+  };
+
+  const generateLocalWellnessTips = () => {
+    if (!currentMedications.length) {
+      setWellnessTips('No medication data available to generate tips.');
+      return;
+    }
+
+    let tips = "Wellness Tips\n\n";
+    tips += "• Take medications exactly as prescribed\n";
+    tips += "• Stay hydrated throughout the day\n";
+    tips += "• Maintain a balanced diet\n";
+
+    currentMedications.forEach(med => {
+      if (med.sideEffects?.includes('Drowsiness')) {
+        tips += `• Avoid driving if ${med.name} causes drowsiness\n`;
+      }
+    });
+
+    setWellnessTips(tips);
+  };
+
   const formatStructuredText = (text) => {
     if (!text) return [];
-    const sections = text.split(/\*\*([^*]+):\*\*/).filter(Boolean);
-    let formattedContent = [];
-    for (let i = 0; i < sections.length; i += 2) {
-      const sectionTitle = sections[i];
-      const sectionContent = sections[i + 1] || '';
+
+    // Split into sections based on **Section:** markers
+    const sections = text.split(/\n\n(?=\*\*[A-Z][^\n]*:\*\*)/).filter(Boolean);
+    const formattedContent = [];
+
+    sections.forEach((section, sectionIndex) => {
+      const lines = section.split('\n').filter(line => line.trim());
+      if (!lines.length) return;
+
+      // Extract section title, removing ** and :
+      const sectionTitleMatch = lines[0].match(/\*\*(.+?):\*\*/);
+      const sectionTitle = sectionTitleMatch ? sectionTitleMatch[1].trim() : lines[0].trim();
+
+      // Add section header with enhanced styling
       formattedContent.push(
-        <h3 key={`title-${i}`} className="text-xl font-semibold text-blue-400 mt-4 mb-2">
+        <h3
+          key={`title-${sectionIndex}`}
+          className="text-xl font-semibold text-blue-400 mt-6 mb-3 tracking-wide"
+        >
           {sectionTitle}
         </h3>
       );
-      const contentLines = sectionContent.split('\n').filter(line => line.trim());
-      contentLines.forEach((line, lineIndex) => {
-        const cleanLine = line.replace(/^\s*\*\s*/, '').trim();
-        if (cleanLine) {
+
+      // Process section content, skipping the title line
+      lines.slice(1).forEach((line, lineIndex) => {
+        // Remove markdown asterisks and trim
+        const cleanLine = line.replace(/\*+\s*/g, '').trim();
+        if (!cleanLine) return;
+
+        // Handle medication entries specifically (to preserve formatting)
+        if (sectionTitle === 'Medications') {
+          // Split medication line into name/composition and dosage
+          const medicationMatch = cleanLine.match(/^(.+?)(?:\s*\(([^)]+)\))?:\s*(.+)$/);
+          if (medicationMatch) {
+            const drugName = medicationMatch[1].trim();
+            const composition = medicationMatch[2] ? `(${medicationMatch[2].trim()})` : '';
+            const dosage = medicationMatch[3].trim();
+
+            formattedContent.push(
+              <div
+                key={`med-${sectionIndex}-${lineIndex}`}
+                className="ml-4 mb-2 text-gray-300"
+              >
+                <span className="font-medium text-blue-300">{drugName}</span>
+                {composition && (
+                  <span className="text-gray-400 ml-1">{composition}</span>
+                )}
+                <span className="text-gray-300">: {dosage}</span>
+              </div>
+            );
+          } else {
+            // Fallback for malformed medication lines
+            formattedContent.push(
+              <p
+                key={`med-fallback-${sectionIndex}-${lineIndex}`}
+                className="ml-4 mb-2 text-gray-300"
+              >
+                {cleanLine}
+              </p>
+            );
+          }
+        } else {
+          // Standard list item for other sections
           formattedContent.push(
-            <p key={`content-${i}-${lineIndex}`} className="text-gray-300 ml-4 mb-1">
-              {cleanLine}
-            </p>
+            <div
+              key={`content-${sectionIndex}-${lineIndex}`}
+              className="flex items-start ml-4 mb-2"
+            >
+              <span className="text-blue-400 mr-2">•</span>
+              <span className="text-gray-300">{cleanLine}</span>
+            </div>
           );
         }
       });
-    }
+    });
+
     return formattedContent;
   };
 
@@ -413,19 +475,18 @@ const PrescriptionAnalyzer = () => {
   };
 
   const getSeverityColor = (severity) => {
-    switch (severity) {
+    switch (severity?.toLowerCase()) {
       case 'high': return 'text-red-400';
       case 'medium': return 'text-yellow-400';
       case 'low': return 'text-blue-400';
       default: return 'text-gray-400';
     }
   };
+
   const handleDownloadQR = () => {
     try {
       const qrCodeElement = document.getElementById('emergency-qr-code');
-      if (!qrCodeElement) {
-        throw new Error('QR Code element not found');
-      }
+      if (!qrCodeElement) throw new Error('QR Code element not found');
 
       const canvas = document.createElement('canvas');
       const canvasWidth = 1024;
@@ -439,8 +500,7 @@ const PrescriptionAnalyzer = () => {
 
       const svgData = new XMLSerializer().serializeToString(qrCodeElement);
       const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const DOMURL = window.URL || window.webkitURL || window;
-      const url = DOMURL.createObjectURL(svgBlob);
+      const url = window.URL.createObjectURL(svgBlob);
 
       const img = new Image();
       img.onload = () => {
@@ -464,11 +524,10 @@ const PrescriptionAnalyzer = () => {
         document.body.appendChild(downloadLink);
         downloadLink.click();
         document.body.removeChild(downloadLink);
-        DOMURL.revokeObjectURL(url);
+        window.URL.revokeObjectURL(url);
       };
 
-      img.onerror = (err) => {
-        console.error('Image loading error:', err);
+      img.onerror = () => {
         throw new Error('Failed to generate QR image');
       };
 
@@ -479,31 +538,26 @@ const PrescriptionAnalyzer = () => {
     }
   };
 
-  const decodeQRContent = (qrData) => {
-    return `Scan to view detailed prescription document:\n${qrData}`;
-  };
-
-  const handlePrescriptionClick = (prescription) => {
+  const handlePrescriptionClick = async (prescription) => {
     setSelectedPrescription(prescription);
+    setStructuredText(prescription.structured_text);
+    const parsedMedications = await parseMedicationData(prescription.structured_text);
+    setCurrentMedications(parsedMedications);
   };
 
   const handleDeletePrescription = async (prescriptionId, event) => {
     event.stopPropagation();
-    if (window.confirm('Are you sure you want to delete this prescription? This action cannot be undone.')) {
+    if (window.confirm('Are you sure you want to delete this prescription?')) {
       const success = await deletePrescription(prescriptionId);
       if (success) {
         if (selectedPrescription?.id === prescriptionId) {
           setSelectedPrescription(null);
+          setStructuredText('');
+          setCurrentMedications([]);
         }
         setErrorMessage('');
-        if (structuredText && prescriptionHistory.find(p => p.id === prescriptionId)?.structured_text === structuredText) {
-          setStructuredText('');
-          setAiSummary('');
-          setWellnessTips('');
-          setProcessingStatus('');
-        }
       } else {
-        setErrorMessage('Failed to delete prescription. Please try again.');
+        setErrorMessage('Failed to delete prescription.');
       }
     }
   };
@@ -526,17 +580,16 @@ const PrescriptionAnalyzer = () => {
                 <button
                   onClick={generateEmergencyQR}
                   className="bg-gradient-to-r from-red-600 to-orange-600 text-white px-5 py-2 rounded-full hover:scale-105 transition-transform shadow-lg flex items-center"
-                  title="Generate QR code for emergency access to your medical information"
                 >
                   <AlertCircle className="w-5 h-5 mr-2" />
                   Emergency QR
                 </button>
-                <input 
-                  type="text" 
-                  placeholder="Search prescriptions" 
+                <input
+                  type="text"
+                  placeholder="Search prescriptions"
                   className="bg-gray-800/60 backdrop-blur-lg text-white px-4 py-2 rounded-full pl-10 w-64 border border-gray-700/30 focus:ring-2 focus:ring-blue-500/50 transition-all"
                 />
-                <button 
+                <button
                   onClick={() => fileInputRef.current.click()}
                   className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-5 py-2 rounded-full hover:scale-105 transition-transform shadow-lg"
                 >
@@ -553,7 +606,7 @@ const PrescriptionAnalyzer = () => {
                   <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-orange-500">
                     Emergency Medical QR
                   </h3>
-                  <button 
+                  <button
                     onClick={() => setShowQRModal(false)}
                     className="text-gray-400 hover:text-white transition-colors"
                   >
@@ -561,7 +614,7 @@ const PrescriptionAnalyzer = () => {
                   </button>
                 </div>
                 <div className="bg-white p-6 rounded-lg flex flex-col items-center mb-4">
-                  <QRCodeSVG 
+                  <QRCodeSVG
                     id="emergency-qr-code"
                     value={qrData}
                     size={256}
@@ -569,15 +622,14 @@ const PrescriptionAnalyzer = () => {
                     fgColor="#000000"
                     level="H"
                     includeMargin={true}
-                    title="Medical Emergency Information"
                   />
                   <p className="text-black text-xs mt-2 font-bold">Scan to view detailed document</p>
                 </div>
                 <p className="text-gray-400 text-sm text-center mb-4">
-                  Scan this QR code to access a detailed PDF of your prescription history.
+                  Scan this QR code to access your prescription history.
                 </p>
                 <div className="flex space-x-4">
-                  <button 
+                  <button
                     onClick={handleDownloadQR}
                     className="flex-1 bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-2 px-4 rounded-xl hover:scale-105 transition-transform flex items-center justify-center"
                   >
@@ -586,7 +638,7 @@ const PrescriptionAnalyzer = () => {
                     </svg>
                     Download QR
                   </button>
-                  <button 
+                  <button
                     onClick={() => setShowQRModal(false)}
                     className="flex-1 bg-gradient-to-r from-red-600 to-orange-600 text-white py-2 px-4 rounded-xl hover:scale-105 transition-transform"
                   >
@@ -604,7 +656,7 @@ const PrescriptionAnalyzer = () => {
                   <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500">
                     Prescription Details - {selectedPrescription.name}
                   </h3>
-                  <button 
+                  <button
                     onClick={() => setSelectedPrescription(null)}
                     className="text-gray-400 hover:text-white transition-colors"
                   >
@@ -614,7 +666,7 @@ const PrescriptionAnalyzer = () => {
                 <div className="text-gray-300 prose prose-invert max-w-none">
                   {formatStructuredText(selectedPrescription.structured_text)}
                 </div>
-                <button 
+                <button
                   onClick={() => setSelectedPrescription(null)}
                   className="mt-4 w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-2 px-4 rounded-xl hover:scale-105 transition-transform"
                 >
@@ -627,14 +679,14 @@ const PrescriptionAnalyzer = () => {
           <div className="flex flex-1 px-8 pb-8 overflow-hidden">
             <div className="flex-1 overflow-y-auto pr-6">
               <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-8 mb-8 border border-gray-700/30 shadow-2xl">
-                <input 
-                  type="file" 
+                <input
+                  type="file"
                   ref={fileInputRef}
-                  className="hidden" 
+                  className="hidden"
                   accept=".png,.jpg,.jpeg,.pdf"
                   onChange={handleFileUpload}
                 />
-                <div 
+                <div
                   onClick={() => fileInputRef.current.click()}
                   className="border-2 border-dashed border-gray-600 rounded-2xl p-10 text-center cursor-pointer hover:border-blue-500 transition-all hover:bg-blue-500/10 group"
                 >
@@ -651,7 +703,7 @@ const PrescriptionAnalyzer = () => {
                 )}
               </div>
 
-              {processingStatus === 'Processing complete' && medicationData.length > 0 && (
+              {processingStatus === 'Processing complete' && currentMedications.length > 0 && (
                 <div className="grid md:grid-cols-1 gap-6 mb-8">
                   <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
                     <div className="flex items-center mb-6">
@@ -663,9 +715,8 @@ const PrescriptionAnalyzer = () => {
                         <p className="text-gray-400 text-sm tracking-wide">Comprehensive medication analysis</p>
                       </div>
                     </div>
-
                     <div className="space-y-6 mt-4">
-                      {medicationData.map((med) => (
+                      {currentMedications.map((med) => (
                         <div key={med.id} className="border-b border-gray-700/50 pb-6 last:border-b-0">
                           <h4 className="text-lg font-semibold text-emerald-400 mb-3 flex items-center">
                             <span className="flex items-center justify-center w-8 h-8 bg-emerald-500/20 text-emerald-300 rounded-full mr-3 text-sm">
@@ -680,15 +731,17 @@ const PrescriptionAnalyzer = () => {
                             <p className="text-gray-300 mb-4">{med.description}</p>
                             <div className="text-blue-300 font-medium mb-1 text-sm uppercase tracking-wider">Cautions:</div>
                             <ul className="list-disc pl-5 mb-4">
-                              {Array.isArray(med.cautions) 
-                                ? med.cautions.map((caution, idx) => (
-                                    <li key={idx} className="text-gray-300 mb-1">{caution}</li>
-                                  )) 
-                                : <li className="text-gray-300 mb-1">No cautions available</li>}
+                              {med.cautions?.length ? (
+                                med.cautions.map((caution, idx) => (
+                                  <li key={idx} className="text-gray-300 mb-1">{caution}</li>
+                                ))
+                              ) : (
+                                <li className="text-gray-300 mb-1">No cautions available</li>
+                              )}
                             </ul>
                             <div className="text-blue-300 font-medium mb-1 text-sm uppercase tracking-wider">Side Effects:</div>
                             <div className="flex flex-wrap gap-2">
-                              {Array.isArray(med.sideEffects) && med.sideEffects.length > 0 ? (
+                              {med.sideEffects?.length ? (
                                 med.sideEffects.map((effect, idx) => (
                                   <span key={idx} className="bg-gray-700/70 px-3 py-1 rounded-full text-gray-300 text-sm">
                                     {effect}
@@ -715,48 +768,45 @@ const PrescriptionAnalyzer = () => {
                       </div>
                     </div>
                     <div className="space-y-6 mt-4">
-                      {medicationData.map((med) => {
-                        const interactions = med.interactions || [];
-                        return (
-                          <div key={`interactions-${med.id}`} className="border-b border-gray-700/50 pb-6 last:border-b-0">
-                            <h4 className="text-lg font-semibold text-amber-400 mb-3 flex items-center">
-                              <span className="flex items-center justify-center w-8 h-8 bg-amber-500/20 text-amber-300 rounded-full mr-3 text-sm">
-                                {med.id}
-                              </span>
-                              {med.name}
-                            </h4>
-                            <div className="pl-11">
-                              {interactions.length > 0 ? (
-                                <>
-                                  <div className="text-amber-300 font-medium mb-3 text-sm uppercase tracking-wider">
-                                    Potential Interactions:
-                                  </div>
-                                  <div className="space-y-3">
-                                    {interactions.map((interaction, idx) => (
-                                      <div key={idx} className="bg-gray-700/50 rounded-lg p-3 border border-gray-600/50">
-                                        <div className="flex items-center justify-between mb-1">
-                                          <div className="font-semibold">{interaction.drugName}</div>
-                                          <div className={`${getSeverityColor(interaction.severity)} text-sm font-medium`}>
-                                            {interaction.severity.charAt(0).toUpperCase() + interaction.severity.slice(1)} Risk
-                                          </div>
-                                        </div>
-                                        <p className="text-gray-300 text-sm">{interaction.effect}</p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="bg-green-500/20 rounded-lg p-4 text-green-300 flex items-center">
-                                  <div className="w-8 h-8 bg-green-500/30 rounded-full flex items-center justify-center mr-3">
-                                    <span className="text-green-300">✓</span>
-                                  </div>
-                                  No known significant interactions detected.
+                      {currentMedications.map((med) => (
+                        <div key={`interactions-${med.id}`} className="border-b border-gray-700/50 pb-6 last:border-b-0">
+                          <h4 className="text-lg font-semibold text-amber-400 mb-3 flex items-center">
+                            <span className="flex items-center justify-center w-8 h-8 bg-amber-500/20 text-amber-300 rounded-full mr-3 text-sm">
+                              {med.id}
+                            </span>
+                            {med.name}
+                          </h4>
+                          <div className="pl-11">
+                            {med.interactions?.length > 0 ? (
+                              <>
+                                <div className="text-amber-300 font-medium mb-3 text-sm uppercase tracking-wider">
+                                  Potential Interactions:
                                 </div>
-                              )}
-                            </div>
+                                <div className="space-y-3">
+                                  {med.interactions.map((interaction, idx) => (
+                                    <div key={idx} className="bg-gray-700/50 rounded-lg p-3 border border-gray-600/50">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <div className="font-semibold">{interaction.drugName}</div>
+                                        <div className={`${getSeverityColor(interaction.severity)} text-sm font-medium`}>
+                                          {interaction.severity.charAt(0).toUpperCase() + interaction.severity.slice(1)} Risk
+                                        </div>
+                                      </div>
+                                      <p className="text-gray-300 text-sm">{interaction.effect}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="bg-green-500/20 rounded-lg p-4 text-green-300 flex items-center">
+                                <div className="w-8 h-8 bg-green-500/30 rounded-full flex items-center justify-center mr-3">
+                                  <span className="text-green-300">✓</span>
+                                </div>
+                                No known significant interactions detected.
+                              </div>
+                            )}
                           </div>
-                        );
-                      })}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -791,8 +841,8 @@ const PrescriptionAnalyzer = () => {
                     </thead>
                     <tbody>
                       {prescriptionHistory.map((prescription) => (
-                        <tr 
-                          key={prescription.id} 
+                        <tr
+                          key={prescription.id}
                           className="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer"
                           onClick={() => handlePrescriptionClick(prescription)}
                         >
@@ -830,7 +880,7 @@ const PrescriptionAnalyzer = () => {
                   <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-4">
                     Action Center
                   </h3>
-                  <button 
+                  <button
                     onClick={generateAiSummary}
                     disabled={!structuredText || isSummarizing}
                     className={`w-full bg-gradient-to-r from-blue-600 to-purple-600 ${
@@ -849,7 +899,7 @@ const PrescriptionAnalyzer = () => {
                       </>
                     )}
                   </button>
-                  <button 
+                  <button
                     onClick={generateWellnessTips}
                     disabled={!structuredText || isGeneratingTips}
                     className={`w-full bg-gradient-to-r from-green-600 to-teal-600 ${
@@ -891,13 +941,13 @@ const PrescriptionAnalyzer = () => {
                     </div>
                   )}
                 </div>
-                {medicationData.length > 0 && (
+                {currentMedications.length > 0 && (
                   <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
                     <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-4">
                       Medications
                     </h3>
                     <ul className="space-y-2">
-                      {medicationData.map((med) => (
+                      {currentMedications.map((med) => (
                         <li key={`mini-${med.id}`} className="flex items-center py-2 border-b border-gray-700/30 last:border-b-0">
                           <span className="flex items-center justify-center w-6 h-6 bg-blue-500/20 text-blue-300 rounded-full mr-3 text-xs">
                             {med.id}

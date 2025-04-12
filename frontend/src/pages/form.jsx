@@ -74,7 +74,21 @@ const Form = () => {
       updateUserData(formData);
       setIsSubmitted(true);
       console.log('Form submitted:', formData);
-      
+      fetch('http://localhost:5000/submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log('Server Response:', data);
+      })
+      .catch(err => {
+        console.error('Submission Error:', err);
+      });
+
       // Navigate to profile page instead of prescription
       setTimeout(() => {
         navigate('/profile');

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { Bell, Calendar, Clock, Check, Plus, Trash2, Filter, ChevronDown, Pill, Repeat, AlertCircle, X, TrendingUp } from 'lucide-react';
+import { Bell, Calendar, Clock, Check, Plus, Trash2, Filter, ChevronDown, Pill, Repeat, AlertCircle, X, TrendingUp, MapPin, Phone, Navigation } from 'lucide-react';
 import Sidebar from '../../components/sidebar';
 import { AppContext } from "../context/AppContext";
 
@@ -28,6 +28,13 @@ const Reminders = () => {
   const notificationAudioRef = useRef(null);
   const notificationCheckIntervalRef = useRef(null);
 
+  // State for pharmacies toggle and data
+  const [showPharmacies, setShowPharmacies] = useState(false);
+  const [pharmacies, setPharmacies] = useState([]);
+  const [locationError, setLocationError] = useState(null);
+  const [isLoadingPharmacies, setIsLoadingPharmacies] = useState(false);
+  const [userLocation, setUserLocation] = useState(null); // Store user's location
+
   // Persist reminders to localStorage whenever they change
   useEffect(() => {
     localStorage.setItem('reminders', JSON.stringify(reminders));
@@ -42,12 +49,8 @@ const Reminders = () => {
 
   // Set up notification checking
   useEffect(() => {
-    // Check for notifications every minute
     notificationCheckIntervalRef.current = setInterval(checkForDueReminders, 60000);
-    
-    // Also check immediately on load
     checkForDueReminders();
-    
     return () => {
       if (notificationCheckIntervalRef.current) {
         clearInterval(notificationCheckIntervalRef.current);
@@ -55,52 +58,123 @@ const Reminders = () => {
     };
   }, [reminders]);
 
+  // Fetch pharmacies when showPharmacies is enabled
+  useEffect(() => {
+    if (showPharmacies) {
+      setIsLoadingPharmacies(true);
+      setLocationError(null);
+      setPharmacies([]);
+      setUserLocation(null);
+
+      if (!navigator.geolocation) {
+        setLocationError('Geolocation is not supported by your browser.');
+        setIsLoadingPharmacies(false);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          setUserLocation({ latitude, longitude });
+          try {
+            const response = await fetch(`http://localhost:5000/api/pharmacies?lat=${latitude}&lon=${longitude}`, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            if (Array.isArray(data)) {
+              setPharmacies(data);
+            } else {
+              setPharmacies([]);
+              setLocationError('No pharmacies found in the response.');
+            }
+          } catch (error) {
+            console.error('Error fetching pharmacies:', error);
+            setLocationError('Failed to fetch pharmacies. Please check your network or try again later.');
+          } finally {
+            setIsLoadingPharmacies(false);
+          }
+        },
+        (error) => {
+          console.error('Geolocation error:', error);
+          let errorMessage = 'Unable to get your location. Please enable location services.';
+          if (error.code === error.PERMISSION_DENIED) {
+            errorMessage = 'Location access was denied. Please allow location access to find nearby pharmacies.';
+          } else if (error.code === error.POSITION_UNAVAILABLE) {
+            errorMessage = 'Location information is unavailable.';
+          } else if (error.code === error.TIMEOUT) {
+            errorMessage = 'The request to get your location timed out.';
+          }
+          setLocationError(errorMessage);
+          setIsLoadingPharmacies(false);
+        },
+        {
+          timeout: 10000,
+          maximumAge: 60000,
+        }
+      );
+    } else {
+      setPharmacies([]);
+      setLocationError(null);
+      setIsLoadingPharmacies(false);
+      setUserLocation(null);
+    }
+  }, [showPharmacies]);
+
+  // Generate OpenStreetMap directions URL
+  const getDirectionsUrl = (pharmacy) => {
+    if (!userLocation) {
+      return '#';
+    }
+
+    const { latitude: startLat, longitude: startLon } = userLocation;
+
+    if (pharmacy.latitude && pharmacy.longitude) {
+      return `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${startLat}%2C${startLon}%3B${pharmacy.latitude}%2C${pharmacy.longitude}`;
+    }
+
+    const encodedAddress = encodeURIComponent(pharmacy.address || '');
+    return `https://www.openstreetmap.org/directions?from=${startLat}%2C${startLon}&to=${encodedAddress}`;
+  };
+
   const checkForDueReminders = () => {
     const now = new Date();
     const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
     const currentDate = now.toISOString().split('T')[0];
-    
-    // Find reminders that are due now (matching the current hour and minute)
+
     const dueReminders = reminders.filter(reminder => {
-      // Skip completed reminders
       if (reminder.completed) return false;
-      
-      // Check if reminder is for today
       if (reminder.date !== currentDate) return false;
-      
-      // Check if the time matches (hour and minute)
       const reminderTimeParts = reminder.time.split(':');
       const reminderHour = reminderTimeParts[0];
       const reminderMinute = reminderTimeParts[1];
-      
-      return reminderHour === now.getHours().toString().padStart(2, '0') && 
+      return reminderHour === now.getHours().toString().padStart(2, '0') &&
              reminderMinute === now.getMinutes().toString().padStart(2, '0');
     });
-    
-    // If we found a due reminder, show the notification
+
     if (dueReminders.length > 0) {
       const firstDueReminder = dueReminders[0];
-      
-      // Show browser notification if permission granted
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification("Medication Reminder", {
           body: `Time to take ${firstDueReminder.medication || firstDueReminder.title}`,
           icon: "/favicon.ico"
         });
       }
-      
-      // Also show in-app notification
       setActiveNotification(firstDueReminder);
       setShowNotification(true);
-      
-      // Play notification sound if audio ref is available
       if (notificationAudioRef.current) {
         notificationAudioRef.current.play().catch(e => console.log("Audio play failed:", e));
       }
     }
   };
 
-  // Handle adding a manual reminder
   const handleAddReminder = () => {
     if (newReminder.title && newReminder.time) {
       const updatedReminder = {
@@ -148,13 +222,11 @@ const Reminders = () => {
         return reminder;
       })
     );
-    
-    // If the notification for this reminder is currently showing, dismiss it
     if (activeNotification && activeNotification.id === id) {
       dismissNotification();
     }
   };
-  
+
   const dismissNotification = () => {
     setShowNotification(false);
     setActiveNotification(null);
@@ -162,8 +234,6 @@ const Reminders = () => {
 
   const handleDeleteReminder = (id) => {
     setReminders(prev => prev.filter(reminder => reminder.id !== id));
-    
-    // If the notification for this reminder is currently showing, dismiss it
     if (activeNotification && activeNotification.id === id) {
       dismissNotification();
     }
@@ -272,15 +342,14 @@ const Reminders = () => {
 
   return (
     <div className="bg-gradient-to-br from-gray-900 via-slate-900 to-black text-white min-h-screen flex">
-      {/* Hidden audio element for notification sound */}
       <audio ref={notificationAudioRef} preload="auto">
         <source src="/notification-sound.mp3" type="audio/mpeg" />
-        {/* Fallback beep sound using base64 encoded audio */}
-        <source 
-          src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLHPR+N2fXBtBhtDeyJplNnOw0K9/WDdjrdBzRDhnsMJ0HrC/cTgZrOuhMwO00zoNDrLJTBoP3OdAFaDN+LhrCo9YqDQkW1QsMU99pPm4Y7qz3ofgbgDgcPvQDuuIDvBQ6dE/+68WrkEbrE4n4U9huFBHU8TtoOGRgYl7yrXBmpJySE6egcfq36lPPEVYlsr93LJkR1CLpNv/0LFkQ0V/oN0EzblXNjpcf8UHyK9PLSpDftEWw6ZhPRg3b9kdvZtnUSsqX+MqroJnbUEkTOk4pX1qfVQkQu1DnoFpiFcdN+9Sm4JphWAVKO9gnH9kj2cTH+xoq3ZdkHIQFetvt2lOlYsNDOhpxFw9oKUFBOdpz1MurK4CAOhp01ATuMsAANxk1k0IxuMBANJY0UcC0vYFAMVMyjsA3w0KFsBEuiQHAAbMLrMXxTl9CrwMY0sE8qqQ4irDgVgdrwu1nA5rvIQw2w2hog96oHAnHQnk0BgTu3yPLSgNFLU7McNvljE9ER7SRC/FVtIzUxMq6GMwu0TkM18POvxoLrAsEDSDEkURcCsmkvEfVkYaEpdOHhIcxhIYQVQQkFwbD1faDxgyZw0r\\" type="audio/wav" />
+        <source
+          src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLHPR+N2fXBtBhtDeyJplNnOw0K9/WDdjrdBzRDhnsMJ0HrC/cTgZrOuhMwO00zoNDrLJTBoP3OdAFaDN+LhrCo9YqDQkW1QsMU99pPm4Y7qz3ofgbgDgcPvQDuuIDvBQ6dE/+68WrkEbrE4n4U9huFBHU8TtoOGRgYl7yrXBmpJySE6egcfq36lPPEVYlsr93LJkR1CLpNv/0LFkQ0V/oN0EzblXNjpcf8UHyK9PLSpDftEWw6ZhPRg3b9kdvZtnUSsqX+MqroJnbUEkTOk4pX1qfVQkQu1DnoFpiFcdN+9Sm4JphWAVKO9gnH9kj2cTH+xoq3ZdkHIQFetvt2lOlYsNDOhpxFw9oKUFBOdpz1MurK4CAOhp01ATuMsAANxk1k0IxuMBANJY0UcC0vYFAMVMyjsA3w0KFsBEuiQHAAbMLrMXxTl9CrwMY0sE8qqQ4irDgVgdrwu1nA5rvIQw2w2hog96oHAnHQnk0BgTu3yPLSgNFLU7McNvljE9ER7SRC/FVtIzUxMq6GMwu0TkM18POvxoLrAsEDSDEkURcCsmkvEdVkYaEpdOHhIcxhIYQVQQkFwbD1faDxgyZw0r"
+          type="audio/wav"
+        />
       </audio>
 
-      {/* In-app notification */}
       {showNotification && activeNotification && (
         <div className="fixed top-6 right-6 z-50 max-w-sm w-full bg-gray-800 rounded-xl border border-purple-500/30 shadow-2xl shadow-purple-500/20 p-4 backdrop-blur-xl transition-all duration-300 animate-slide-in">
           <div className="flex items-start">
@@ -376,12 +445,106 @@ const Reminders = () => {
                   <Plus className="w-5 h-5 mr-2" />
                   Add Reminder
                 </button>
+                <button
+                  onClick={() => setShowPharmacies(!showPharmacies)}
+                  className={`flex items-center px-4 py-2 rounded-full border transition-colors ${
+                    showPharmacies
+                      ? 'bg-purple-600 text-white border-purple-600'
+                      : 'bg-gray-800/60 text-gray-300 border-gray-700/30 hover:bg-gray-700/60'
+                  }`}
+                >
+                  <MapPin className="w-5 h-5 mr-2" />
+                  {showPharmacies ? 'Hide Nearby Pharmacies' : 'Show Nearby Pharmacies'}
+                </button>
               </div>
             </div>
           </div>
 
           <div className="flex flex-1 px-8 pb-8 overflow-hidden">
             <div className="flex-1 overflow-y-auto">
+              {showPharmacies && (
+                <div className="mb-8">
+                  <div className="flex items-center mb-4">
+                    <MapPin className="w-5 h-5 text-purple-400 mr-2" />
+                    <h3 className="text-xl font-semibold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">Nearby Pharmacies</h3>
+                  </div>
+                  <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
+                    {isLoadingPharmacies ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400"></div>
+                        <span className="ml-3 text-gray-400">Loading pharmacies...</span>
+                      </div>
+                    ) : locationError ? (
+                      <div className="flex flex-col items-center justify-center py-6 px-4">
+                        <AlertCircle className="w-8 h-8 text-red-400 mr-3 mb-2" />
+                        <p className="text-red-400 text-center">{locationError}</p>
+                        <button
+                          onClick={() => setShowPharmacies(false)}
+                          className="mt-4 bg-purple-500/20 text-purple-400 px-4 py-2 rounded-full text-sm hover:bg-purple-500/30 transition-colors"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    ) : pharmacies.length > 0 ? (
+                      <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {pharmacies.map((pharmacy) => (
+                          <li
+                            key={pharmacy.id || pharmacy.name}
+                            className="bg-gray-800/80 rounded-xl p-4 border border-purple-500/10 hover:border-purple-500/20 transition-all shadow-md hover:shadow-purple-500/5"
+                          >
+                            <div className="flex items-start">
+                              <div className="bg-purple-500/10 rounded-full p-2 mr-3">
+                                <MapPin className="w-5 h-5 text-purple-400" />
+                              </div>
+                              <div className="flex-1">
+                                <h4 className="text-white font-semibold mb-1">{pharmacy.name || 'Unknown Pharmacy'}</h4>
+                                <p className="text-gray-400 text-sm">{pharmacy.address || 'No address available'}</p>
+                                <div className="flex mt-2 items-center">
+                                  <Clock className="w-3 h-3 text-gray-500 mr-1" />
+                                  <span className="text-xs text-gray-500">{pharmacy.hours || 'Opens 9 AM - 9 PM'}</span>
+                                  <span className="mx-2 text-gray-600">•</span>
+                                  <span className="text-xs text-green-400">{pharmacy.status || 'Open Now'}</span>
+                                </div>
+                                <div className="mt-3 flex space-x-2">
+                                  <button className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 transition-colors">
+                                    <Phone className="w-3 h-3 mr-1" /> Call
+                                  </button>
+                                  <a
+                                    href={getDirectionsUrl(pharmacy)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 transition-colors"
+                                    onClick={(e) => {
+                                      if (!userLocation) {
+                                        e.preventDefault();
+                                        alert('Location unavailable. Please enable location services.');
+                                      }
+                                    }}
+                                  >
+                                    <Navigation className="w-3 h-3 mr-1" /> Directions
+                                  </a>
+                                </div>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-8">
+                        <MapPin className="w-16 h-16 text-gray-600 mb-4" />
+                        <p className="text-gray-400 text-center">No pharmacies found nearby.</p>
+                        <button
+                          onClick={() => setShowPharmacies(false)}
+                          className="mt-4 bg-purple-500/20 text-purple-400 px-4 py-2 rounded-full text-sm hover:bg-purple-500/30 transition-colors"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center">
                   <Bell className="w-6 h-6 text-purple-400 mr-2" />
@@ -506,7 +669,6 @@ const Reminders = () => {
 
             <div className="w-80 flex-shrink-0 pl-6">
               <div className="sticky top-0 pt-8">
-                {/* Add Upcoming Reminders Section */}
                 <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl mb-6">
                   <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500 mb-4">
                     Upcoming Reminders
@@ -564,107 +726,106 @@ const Reminders = () => {
                 <div>
                   <label className="block text-gray-400 text-sm mb-1">Medication (Optional)</label>
                   <select
-                  value={newReminder.medication}
-                  onChange={(e) => setNewReminder({ ...newReminder, medication: e.target.value })}
-                  className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-                >
-                  <option value="">Select a medication</option>
-                  {medicationData.map(med => (
-                    <option key={med.id} value={med.name}>{med.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-gray-400 text-sm mb-1">Description (Optional)</label>
-                <textarea
-                  value={newReminder.description}
-                  onChange={(e) => setNewReminder({ ...newReminder, description: e.target.value })}
-                  className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-                  placeholder="Additional notes"
-                  rows="2"
-                ></textarea>
-              </div>
-              <div className="flex space-x-4">
-                <div className="flex-1">
-                  <label className="block text-gray-400 text-sm mb-1">Time</label>
-                  <input
-                    type="time"
-                    value={newReminder.time}
-                    onChange={(e) => setNewReminder({ ...newReminder, time: e.target.value })}
+                    value={newReminder.medication}
+                    onChange={(e) => setNewReminder({ ...newReminder, medication: e.target.value })}
                     className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-                  />
+                  >
+                    <option value="">Select a medication</option>
+                    {medicationData.map(med => (
+                      <option key={med.id} value={med.name}>{med.name}</option>
+                    ))}
+                  </select>
                 </div>
-                <div className="flex-1">
-                  <label className="block text-gray-400 text-sm mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={newReminder.date}
-                    onChange={(e) => setNewReminder({ ...newReminder, date: e.target.value })}
+                <div>
+                  <label className="block text-gray-400 text-sm mb-1">Description (Optional)</label>
+                  <textarea
+                    value={newReminder.description}
+                    onChange={(e) => setNewReminder({ ...newReminder, description: e.target.value })}
                     className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-                  />
+                    placeholder="Additional notes"
+                    rows="2"
+                  ></textarea>
                 </div>
-              </div>
-              <div>
-                <label className="block text-gray-400 text-sm mb-1">Priority</label>
-                <div className="flex space-x-2">
-                  <button
-                    type="button"
-                    className={`flex-1 py-2 px-4 rounded-lg text-sm ${newReminder.priority === 'low' ? 'bg-green-500/30 text-green-400 border border-green-500/30' : 'bg-gray-700/60 text-gray-400 border border-gray-600/50'}`}
-                    onClick={() => setNewReminder({ ...newReminder, priority: 'low' })}
+                <div className="flex space-x-4">
+                  <div className="flex-1">
+                    <label className="block text-gray-400 text-sm mb-1">Time</label>
+                    <input
+                      type="time"
+                      value={newReminder.time}
+                      onChange={(e) => setNewReminder({ ...newReminder, time: e.target.value })}
+                      className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-gray-400 text-sm mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={newReminder.date}
+                      onChange={(e) => setNewReminder({ ...newReminder, date: e.target.value })}
+                      className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-gray-400 text-sm mb-1">Priority</label>
+                  <div className="flex space-x-2">
+                    <button
+                      type="button"
+                      className={`flex-1 py-2 px-4 rounded-lg text-sm ${newReminder.priority === 'low' ? 'bg-green-500/30 text-green-400 border border-green-500/30' : 'bg-gray-700/60 text-gray-400 border border-gray-600/50'}`}
+                      onClick={() => setNewReminder({ ...newReminder, priority: 'low' })}
+                    >
+                      Low
+                    </button>
+                    <button
+                      type="button"
+                      className={`flex-1 py-2 px-4 rounded-lg text-sm ${newReminder.priority === 'medium' ? 'bg-yellow-500/30 text-yellow-400 border border-yellow-500/30' : 'bg-gray-700/60 text-gray-400 border border-gray-600/50'}`}
+                      onClick={() => setNewReminder({ ...newReminder, priority: 'medium' })}
+                    >
+                      Medium
+                    </button>
+                    <button
+                      type="button"
+                      className={`flex-1 py-2 px-4 rounded-lg text-sm ${newReminder.priority === 'high' ? 'bg-red-500/30 text-red-400 border border-red-500/30' : 'bg-gray-700/60 text-gray-400 border border-gray-600/50'}`}
+                      onClick={() => setNewReminder({ ...newReminder, priority: 'high' })}
+                    >
+                      High
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-gray-400 text-sm mb-1">Recurring</label>
+                  <select
+                    value={newReminder.recurring}
+                    onChange={(e) => setNewReminder({ ...newReminder, recurring: e.target.value })}
+                    className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
                   >
-                    Low
+                    <option value="none">Not recurring</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                <div className="pt-4 flex justify-end space-x-3">
+                  <button
+                    onClick={handleCancelAdd}
+                    className="px-4 py-2 border border-gray-600 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors"
+                  >
+                    Cancel
                   </button>
                   <button
-                    type="button"
-                    className={`flex-1 py-2 px-4 rounded-lg text-sm ${newReminder.priority === 'medium' ? 'bg-yellow-500/30 text-yellow-400 border border-yellow-500/30' : 'bg-gray-700/60 text-gray-400 border border-gray-600/50'}`}
-                    onClick={() => setNewReminder({ ...newReminder, priority: 'medium' })}
+                    onClick={handleAddReminder}
+                    className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-colors"
+                    disabled={!newReminder.title || !newReminder.time}
                   >
-                    Medium
-                  </button>
-                  <button
-                    type="button"
-                    className={`flex-1 py-2 px-4 rounded-lg text-sm ${newReminder.priority === 'high' ? 'bg-red-500/30 text-red-400 border border-red-500/30' : 'bg-gray-700/60 text-gray-400 border border-gray-600/50'}`}
-                    onClick={() => setNewReminder({ ...newReminder, priority: 'high' })}
-                  >
-                    High
+                    Add Reminder
                   </button>
                 </div>
-              </div>
-              <div>
-                <label className="block text-gray-400 text-sm mb-1">Recurring</label>
-                <select
-                  value={newReminder.recurring}
-                  onChange={(e) => setNewReminder({ ...newReminder, recurring: e.target.value })}
-                  className="w-full bg-gray-700/60 border border-gray-600/50 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-                >
-                  <option value="none">Not recurring</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
-              <div className="pt-4 flex justify-end space-x-3">
-                <button
-                  onClick={handleCancelAdd}
-                  className="px-4 py-2 border border-gray-600 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddReminder}
-                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-colors"
-                  disabled={!newReminder.title || !newReminder.time}
-                >
-                  Add Reminder
-                </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Report Modal with improved sizing */}
-      {showReport && (
+        {showReport && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-gray-800 rounded-2xl p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto border border-gray-700/50 shadow-2xl">
               <div className="flex items-center justify-between mb-6">
@@ -745,13 +906,13 @@ const Reminders = () => {
                 >
                   Close Report
                 </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
 };
 
 export default Reminders;

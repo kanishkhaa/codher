@@ -6,26 +6,41 @@ import google.generativeai as genai
 import pickle
 import pandas as pd
 import json
+import requests
+import secrets
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins to prevent CORS issues
 
 # Load the trained model and label encoders
-with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\medicine_model.pkl", "rb") as model_file:
-    model = pickle.load(model_file)
-
-with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\label_encoders.pkl", "rb") as le_file:
-    label_encoders = pickle.load(le_file)
+try:
+    with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\medicine_model.pkl", "rb") as model_file:
+        model = pickle.load(model_file)
+    with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\label_encoders.pkl", "rb") as le_file:
+        label_encoders = pickle.load(le_file)
+except FileNotFoundError as e:
+    app.logger.error(f"Model or label encoder file not found: {e}")
+    raise
 
 # Configure Google Generative AI API
-genai.configure(api_key="AIzaSyBZ0xQPAupZmcN6sH2Nv4pbudpimJMd_n0")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    app.logger.error("Gemini API key not set in environment variables")
+    raise ValueError("GEMINI_API_KEY is required")
+genai.configure(api_key=GEMINI_API_KEY)
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
-
+# Folder configurations
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "output"
 DATA_FOLDER = "data"
@@ -57,50 +72,69 @@ def preprocess_image(image_path):
     return processed
 
 def extract_text(image_path):
-    processed_image = preprocess_image(image_path)
-    custom_config = r'--oem 3 --psm 6'
-    extracted_text = pytesseract.image_to_string(processed_image, config=custom_config)
-    return extracted_text.strip() or "No text extracted"
+    try:
+        processed_image = preprocess_image(image_path)
+        custom_config = r'--oem 3 --psm 6'
+        extracted_text = pytesseract.image_to_string(processed_image, config=custom_config)
+        return extracted_text.strip() or "No text extracted"
+    except Exception as e:
+        app.logger.error(f"Error extracting text: {e}")
+        return "Error extracting text"
 
 def predict_generic_name(medicine_name):
-    if medicine_name in label_encoders["MEDICINE_NAME"].classes_:
-        medicine_encoded = label_encoders["MEDICINE_NAME"].transform([medicine_name])
-        predicted_label = model.predict(pd.DataFrame({"MEDICINE_NAME": medicine_encoded}))
-        generic_name = label_encoders["GENERIC_NAME"].inverse_transform(predicted_label)[0]
-        return generic_name
-    return "Unknown Medicine"
+    try:
+        if medicine_name in label_encoders["MEDICINE_NAME"].classes_:
+            medicine_encoded = label_encoders["MEDICINE_NAME"].transform([medicine_name])
+            predicted_label = model.predict(pd.DataFrame({"MEDICINE_NAME": medicine_encoded}))
+            generic_name = label_encoders["GENERIC_NAME"].inverse_transform(predicted_label)[0]
+            return generic_name
+        return "Unknown Medicine"
+    except Exception as e:
+        app.logger.error(f"Error predicting generic name: {e}")
+        return "Prediction Error"
 
 def organize_text_with_ai(text):
-    model = genai.GenerativeModel("gemini-1.5-pro")
-    prompt = f"""
-    Organize the following prescription text into a structured format with clearly labeled sections:
-    - **Patient Information** (Name, Age, Gender if available)
-    - **Doctor Information** (Name, Hospital/Clinic, License Number if available)
-    - **Medications** (Medicine Name, Dosage, Frequency)
-    - **Special Instructions** (Dietary advice, warnings, or extra instructions)
-    Prescription Text: {text}
-    """
-    response = model.generate_content(prompt)
-    structured_text = response.text.strip() if response.text else "No response from AI."
-    
-    extracted_medicines = []
-    for line in structured_text.split('\n'):
-        if "Medicine Name" in line:
-            med_name = line.split("Medicine Name:")[-1].split(",")[0].strip()
-            extracted_medicines.append(med_name)
-    
-    generic_predictions = {med: predict_generic_name(med) for med in extracted_medicines}
-    return {"structured_text": structured_text, "generic_predictions": generic_predictions}
+    try:
+        model = genai.GenerativeModel("gemini-1.5-pro")
+        prompt = f"""
+        Organize the following prescription text into a structured format with clearly labeled sections:
+        - *Patient Information* (Name, Age, Gender if available)
+        - *Doctor Information* (Name, Hospital/Clinic, License Number if available)
+        - *Medications* (Medicine Name, Dosage, Frequency)
+        - *Special Instructions* (Dietary advice, warnings, or extra instructions)
+        Prescription Text: {text}
+        """
+        response = model.generate_content(prompt)
+        structured_text = response.text.strip() if response.text else "No response from AI."
+        
+        extracted_medicines = []
+        for line in structured_text.split('\n'):
+            if "Medicine Name" in line:
+                med_name = line.split("Medicine Name:")[-1].split(",")[0].strip()
+                extracted_medicines.append(med_name)
+        
+        generic_predictions = {med: predict_generic_name(med) for med in extracted_medicines}
+        return {"structured_text": structured_text, "generic_predictions": generic_predictions}
+    except Exception as e:
+        app.logger.error(f"Error organizing text with AI: {e}")
+        return {"structured_text": "Error processing text", "generic_predictions": {}}
 
 def load_json(file_path, default=[]):
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as f:
-            return json.load(f)
-    return default
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        return default
+    except Exception as e:
+        app.logger.error(f"Error loading JSON from {file_path}: {e}")
+        return default
 
 def save_json(file_path, data):
-    with open(file_path, 'w') as f:
-        json.dump(data, f, indent=4)
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        app.logger.error(f"Error saving JSON to {file_path}: {e}")
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -113,166 +147,281 @@ def upload_file():
     
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(filepath)
+    try:
+        file.save(filepath)
+        extracted_text = extract_text(filepath)
+        structured_data = organize_text_with_ai(extracted_text)
 
-    extracted_text = extract_text(filepath)
-    structured_data = organize_text_with_ai(extracted_text)
+        # Load existing data
+        prescriptions = load_json(PRESCRIPTIONS_FILE)
+        medications = load_json(MEDICATIONS_FILE)
+        reminders = load_json(REMINDERS_FILE)
 
-    # Load existing data
-    prescriptions = load_json(PRESCRIPTIONS_FILE)
-    medications = load_json(MEDICATIONS_FILE)
-    reminders = load_json(REMINDERS_FILE)
+        # Update prescriptions
+        new_prescription = {
+            "id": len(prescriptions) + 1,
+            "filename": filename,
+            "date": pd.Timestamp.now().strftime('%Y-%m-%d'),
+            "structured_text": structured_data["structured_text"],
+            "generic_predictions": structured_data["generic_predictions"]
+        }
+        prescriptions.append(new_prescription)
+        save_json(PRESCRIPTIONS_FILE, prescriptions)
 
-    # Update prescriptions
-    new_prescription = {
-        "id": len(prescriptions) + 1,
-        "filename": filename,
-        "date": pd.Timestamp.now().strftime('%Y-%m-%d'),
-        "structured_text": structured_data["structured_text"],
-        "generic_predictions": structured_data["generic_predictions"]
-    }
-    prescriptions.append(new_prescription)
-    save_json(PRESCRIPTIONS_FILE, prescriptions)
+        # Update medications
+        for med_name, generic_name in structured_data["generic_predictions"].items():
+            if not any(m['name'] == med_name for m in medications):
+                medications.append({
+                    "id": len(medications) + 1,
+                    "name": med_name,
+                    "description": generic_name,
+                    "caution": "Take as directed",
+                    "sideEffects": "Consult doctor"
+                })
+        save_json(MEDICATIONS_FILE, medications)
 
-    # Update medications
-    for med_name, generic_name in structured_data["generic_predictions"].items():
-        if not any(m['name'] == med_name for m in medications):
-            medications.append({
-                "id": len(medications) + 1,
-                "name": med_name,
-                "description": generic_name,
-                "caution": "Take as directed",
-                "sideEffects": "Consult doctor"
+        # Update reminders
+        today = pd.Timestamp.now().strftime('%Y-%m-%d')
+        refill_date = (pd.Timestamp.now() + pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+        for i, (med_name, _) in enumerate(structured_data["generic_predictions"].items()):
+            reminders.append({
+                "id": len(reminders) + 1 + i,
+                "medication": med_name,
+                "title": f"Take {med_name}",
+                "date": today,
+                "time": f"{8 + i}:00",
+                "recurring": "daily",
+                "completed": False
             })
-    save_json(MEDICATIONS_FILE, medications)
+            reminders.append({
+                "id": len(reminders) + 1 + i + 100,
+                "medication": med_name,
+                "title": f"Refill {med_name}",
+                "date": refill_date,
+                "time": "09:00",
+                "recurring": "none",
+                "completed": False
+            })
+        save_json(REMINDERS_FILE, reminders)
 
-    # Update reminders
-    today = pd.Timestamp.now().strftime('%Y-%m-%d')
-    refill_date = (pd.Timestamp.now() + pd.Timedelta(days=30)).strftime('%Y-%m-%d')
-    for i, (med_name, _) in enumerate(structured_data["generic_predictions"].items()):
-        reminders.append({
-            "id": len(reminders) + 1 + i,
-            "medication": med_name,
-            "title": f"Take {med_name}",
-            "date": today,
-            "time": f"{8 + i}:00",
-            "recurring": "daily",
-            "completed": False
+        return jsonify({
+            "filename": filename,
+            "extracted_text": extracted_text,
+            "structured_text": structured_data["structured_text"],
+            "generic_predictions": structured_data["generic_predictions"]
         })
-        reminders.append({
-            "id": len(reminders) + 1 + i + 100,
-            "medication": med_name,
-            "title": f"Refill {med_name}",
-            "date": refill_date,
-            "time": "09:00",
-            "recurring": "none",
-            "completed": False
-        })
-    save_json(REMINDERS_FILE, reminders)
-
-    return jsonify({
-        "filename": filename,
-        "extracted_text": extracted_text,
-        "structured_text": structured_data["structured_text"],
-        "generic_predictions": structured_data["generic_predictions"]
-    })
+    except Exception as e:
+        app.logger.error(f"Error processing upload: {e}")
+        return jsonify({"error": "Failed to process file"}), 500
 
 @app.route('/prescriptions', methods=['GET'])
 def get_prescriptions():
-    return jsonify(load_json(PRESCRIPTIONS_FILE))
+    try:
+        return jsonify(load_json(PRESCRIPTIONS_FILE))
+    except Exception as e:
+        app.logger.error(f"Error fetching prescriptions: {e}")
+        return jsonify({"error": "Failed to fetch prescriptions"}), 500
 
 @app.route('/medications', methods=['GET'])
 def get_medications():
-    return jsonify(load_json(MEDICATIONS_FILE))
+    try:
+        return jsonify(load_json(MEDICATIONS_FILE))
+    except Exception as e:
+        app.logger.error(f"Error fetching medications: {e}")
+        return jsonify({"error": "Failed to fetch medications"}), 500
 
 @app.route('/reminders', methods=['GET'])
 def get_reminders():
-    return jsonify(load_json(REMINDERS_FILE))
+    try:
+        return jsonify(load_json(REMINDERS_FILE))
+    except Exception as e:
+        app.logger.error(f"Error fetching reminders: {e}")
+        return jsonify({"error": "Failed to fetch reminders"}), 500
 
 @app.route('/reminders/<int:id>/complete', methods=['POST'])
 def complete_reminder(id):
-    reminders = load_json(REMINDERS_FILE)
-    for reminder in reminders:
-        if reminder['id'] == id:
-            reminder['completed'] = True
-            break
-    save_json(REMINDERS_FILE, reminders)
-    return jsonify({"status": "success"})
+    try:
+        reminders = load_json(REMINDERS_FILE)
+        for reminder in reminders:
+            if reminder['id'] == id:
+                reminder['completed'] = True
+                break
+        save_json(REMINDERS_FILE, reminders)
+        return jsonify({"status": "success"})
+    except Exception as e:
+        app.logger.error(f"Error completing reminder {id}: {e}")
+        return jsonify({"error": "Failed to complete reminder"}), 500
 
 @app.route('/generate-prescription-doc', methods=['POST'])
 def generate_prescription_doc():
-    data = request.get_json()
-    patient = data.get('patient', {})
-    medications = data.get('medications', [])
-    prescriptions = data.get('prescriptions', [])
-    timestamp = data.get('timestamp', pd.Timestamp.now().strftime('%Y-%m-%d'))
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
 
-    # Generate PDF
-    file_name = f"prescription_{patient.get('n', 'Unknown').replace(' ', '_')}_{timestamp}.pdf"
-    file_path = os.path.join(app.config['DOCS_FOLDER'], file_name)
-    doc = SimpleDocTemplate(file_path, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
+        patient = data.get('patient', {})
+        medications = data.get('medications', [])
+        prescriptions = data.get('prescriptions', [])
+        timestamp = data.get('timestamp', pd.Timestamp.now().strftime('%Y-%m-%d'))
 
-    # Title
-    story.append(Paragraph("Emergency Medical Information", styles['Title']))
-    story.append(Spacer(1, 12))
+        # Generate PDF
+        file_name = f"prescription_{patient.get('n', 'Unknown').replace(' ', '')}{timestamp}.pdf"
+        file_path = os.path.join(app.config['DOCS_FOLDER'], file_name)
+        doc = SimpleDocTemplate(file_path, pagesize=letter)
+        styles = getSampleStyleSheet()
+        story = []
 
-    # Patient Info
-    story.append(Paragraph(f"PATIENT: {patient.get('n', 'Unknown')}", styles['Normal']))
-    if patient.get('g') != 'U':
-        story.append(Paragraph(f"GENDER: {patient.get('g')}", styles['Normal']))
-    if patient.get('e') != 'None':
-        story.append(Paragraph(f"EMERGENCY CONTACT: {patient.get('e')}", styles['Normal']))
-    story.append(Spacer(1, 12))
+        # Title
+        story.append(Paragraph("Emergency Medical Information", styles['Title']))
+        story.append(Spacer(1, 12))
 
-    # Medications
-    story.append(Paragraph("MEDICATIONS:", styles['Heading2']))
-    for i, med in enumerate(medications, 1):
-        story.append(Paragraph(f"{i}. {med['n']}: {med['d']} ({med.get('date', 'N/A')})", styles['Normal']))
-    story.append(Spacer(1, 12))
+        # Patient Info
+        story.append(Paragraph(f"PATIENT: {patient.get('n', 'Unknown')}", styles['Normal']))
+        if patient.get('g', 'U') != 'U':
+            story.append(Paragraph(f"GENDER: {patient.get('g')}", styles['Normal']))
+        if patient.get('e', 'None') != 'None':
+            story.append(Paragraph(f"EMERGENCY CONTACT: {patient.get('e')}", styles['Normal']))
+        story.append(Spacer(1, 12))
 
-    # Prescription Details
-    story.append(Paragraph("PRESCRIPTION DETAILS:", styles['Heading2']))
-    for i, p in enumerate(prescriptions, 1):
-        # Use .get() to handle missing 'doctor' key with a default value
-        doctor = p.get('doctor', 'Unknown')
-        story.append(Paragraph(f"{i}. Date: {p.get('date', 'N/A')}, Doctor: {doctor}", styles['Normal']))
-        clean_text = p.get('structured_text', 'No details available').replace('**', '').replace('*', '')
-        story.append(Paragraph(clean_text, styles['Normal']))
-        story.append(Spacer(1, 6))
-    story.append(Spacer(1, 12))
+        # Medications
+        story.append(Paragraph("MEDICATIONS:", styles['Heading2']))
+        for i, med in enumerate(medications, 1):
+            story.append(Paragraph(f"{i}. {med.get('n', 'Unknown')}: {med.get('d', 'N/A')} ({med.get('date', 'N/A')})", styles['Normal']))
+        story.append(Spacer(1, 12))
 
-    # Footer
-    story.append(Paragraph(f"Generated: {timestamp}", styles['Normal']))
+        # Prescription Details
+        story.append(Paragraph("PRESCRIPTION DETAILS:", styles['Heading2']))
+        for i, p in enumerate(prescriptions, 1):
+            doctor = p.get('doctor', 'Unknown')
+            story.append(Paragraph(f"{i}. Date: {p.get('date', 'N/A')}, Doctor: {doctor}", styles['Normal']))
+            clean_text = p.get('structured_text', 'No details available').replace('', '').replace('*', '')
+            story.append(Paragraph(clean_text, styles['Normal']))
+            story.append(Spacer(1, 6))
+        story.append(Spacer(1, 12))
 
-    doc.build(story)
-    url = f"http://localhost:5000/docs/{file_name}"
-    return jsonify({"url": url})
+        # Footer
+        story.append(Paragraph(f"Generated: {timestamp}", styles['Normal']))
+
+        doc.build(story)
+        url = f"http://localhost:5000/docs/{file_name}"
+        return jsonify({"url": url})
+    except Exception as e:
+        app.logger.error(f"Error generating prescription doc: {e}")
+        return jsonify({"error": "Failed to generate document"}), 500
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Welcome to the Smart Health Backend!"
 
 @app.route('/docs/<filename>', methods=['GET'])
 def serve_doc(filename):
-    return send_from_directory(app.config['DOCS_FOLDER'], filename)
+    try:
+        return send_from_directory(app.config['DOCS_FOLDER'], filename)
+    except Exception as e:
+        app.logger.error(f"Error serving document {filename}: {e}")
+        return jsonify({"error": "Document not found"}), 404
+
 @app.route('/prescriptions/<int:id>', methods=['DELETE'])
 def delete_prescription(id):
-    prescriptions = load_json(PRESCRIPTIONS_FILE)
-    prescriptions = [p for p in prescriptions if p['id'] != id]
-    save_json(PRESCRIPTIONS_FILE, prescriptions)
-    return jsonify({"status": "success", "message": f"Prescription {id} deleted"})
+    try:
+        prescriptions = load_json(PRESCRIPTIONS_FILE)
+        prescriptions = [p for p in prescriptions if p['id'] != id]
+        save_json(PRESCRIPTIONS_FILE, prescriptions)
+        return jsonify({"status": "success", "message": f"Prescription {id} deleted"})
+    except Exception as e:
+        app.logger.error(f"Error deleting prescription {id}: {e}")
+        return jsonify({"error": "Failed to delete prescription"}), 500
 
 @app.route('/medications/<int:id>', methods=['DELETE'])
 def delete_medication(id):
-    medications = load_json(MEDICATIONS_FILE)
-    medications = [m for m in medications if m['id'] != id]
-    save_json(MEDICATIONS_FILE, medications)
-    return jsonify({"status": "success", "message": f"Medication {id} deleted"})
+    try:
+        medications = load_json(MEDICATIONS_FILE)
+        medications = [m for m in medications if m['id'] != id]
+        save_json(MEDICATIONS_FILE, medications)
+        return jsonify({"status": "success", "message": f"Medication {id} deleted"})
+    except Exception as e:
+        app.logger.error(f"Error deleting medication {id}: {e}")
+        return jsonify({"error": "Failed to delete medication"}), 500
+
+@app.route('/profile', methods=['GET'])
+def profile():
+    try:
+        return jsonify({"message": "Profile data"})
+    except Exception as e:
+        app.logger.error(f"Error fetching profile: {e}")
+        return jsonify({"error": "Failed to fetch profile"}), 500
 
 @app.route('/reminders/<int:id>', methods=['DELETE'])
 def delete_reminder(id):
-    reminders = load_json(REMINDERS_FILE)
-    reminders = [r for r in reminders if r['id'] != id]
-    save_json(REMINDERS_FILE, reminders)
-    return jsonify({"status": "success", "message": f"Reminder {id} deleted"})
+    try:
+        reminders = load_json(REMINDERS_FILE)
+        reminders = [r for r in reminders if r['id'] != id]
+        save_json(REMINDERS_FILE, reminders)
+        return jsonify({"status": "success", "message": f"Reminder {id} deleted"})
+    except Exception as e:
+        app.logger.error(f"Error deleting reminder {id}: {e}")
+        return jsonify({"error": "Failed to delete reminder"}), 500
+
+@app.route('/api/pharmacies', methods=['GET'])
+def get_pharmacies():
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+    
+    if not lat or not lon:
+        return jsonify({"error": "Latitude and Longitude are required"}), 400
+    
+    try:
+        GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY")
+        if not GEOAPIFY_API_KEY:
+            app.logger.error("Geoapify API key not set")
+            return jsonify({"error": "Geoapify API key missing"}), 500
+
+        response = requests.get("https://api.geoapify.com/v2/places", params={
+            "categories": "healthcare.pharmacy",
+            "filter": f"circle:{lon},{lat},50000",
+            "bias": f"proximity:{lon},{lat}",
+            "limit": 10,
+            "apiKey": GEOAPIFY_API_KEY
+        })
+        
+        response.raise_for_status()
+        data = response.json()
+        
+        pharmacies = [{
+            "id": pharmacy["properties"].get("place_id", f"pharm-{secrets.token_hex(4)}"),
+            "name": pharmacy["properties"].get("name", "Unnamed Pharmacy"),
+            "address": pharmacy["properties"].get("formatted", "Address not available")
+        } for pharmacy in data.get("features", [])]
+        
+        return jsonify(pharmacies)
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Error fetching pharmacies: {str(e)}")
+        return jsonify({"error": f"Failed to fetch pharmacy data: {str(e)}"}), 500
+
+@app.route('/chat-gemini', methods=['POST'])
+def chat_gemini():
+    try:
+        data = request.get_json()
+        if not data or 'chat' not in data:
+            return jsonify({"error": "Message is required"}), 400
+
+        message = data['chat']
+        history = data.get('history', [])
+
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(message)
+
+        bot_response = response.text.strip() if response.text else "No response from AI."
+
+        updated_history = history + [
+            {"role": "user", "parts": [{"text": message}]},
+            {"role": "model", "parts": [{"text": bot_response}]}
+        ]
+
+        return jsonify({"text": bot_response, "history": updated_history})
+    except Exception as e:
+        app.logger.error(f"Error in chat-gemini: {str(e)}")
+        return jsonify({"error": f"Failed to process chat request: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

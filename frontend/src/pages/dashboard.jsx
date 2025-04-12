@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { Calendar, Clock, AlertCircle, PieChart, Activity, User } from 'lucide-react';
 import Sidebar from '../../components/sidebar';
-import { AppContext } from '../context/AppContext.jsx'; // Ensure correct path
+import { AppContext } from '../context/AppContext.jsx';
 
 const MedicationDashboard = () => {
   const { prescriptionHistory, setPrescriptionHistory, medicationData, setMedicationData, reminders, setReminders } = useContext(AppContext);
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [activeSegment, setActiveSegment] = useState(null);
+  const [interactions, setInteractions] = useState([]);
+  const [selectedDate, setSelectedDate] = useState(null);
   const [dashboardData, setDashboardData] = useState({
     totalMedications: 0,
     nextRefillDate: 'N/A',
@@ -19,7 +21,6 @@ const MedicationDashboard = () => {
   });
   const [loading, setLoading] = useState(true);
 
-  // Fetch initial data is handled by AppContext, so we only need to process dashboard data
   useEffect(() => {
     const deriveDashboardData = () => {
       setLoading(true);
@@ -35,10 +36,7 @@ const MedicationDashboard = () => {
         return now > reminderTime && dateString <= today;
       };
 
-      // Total Medications
       const totalMedications = medicationData.length;
-
-      // Next Refill Date
       const upcomingRefills = reminders
         .filter(r => r.recurring === 'none' && r.title.includes('Refill'))
         .map(r => ({
@@ -48,7 +46,6 @@ const MedicationDashboard = () => {
         .sort((a, b) => new Date(a.date) - new Date(b.date));
       const nextRefillDate = upcomingRefills[0]?.date || 'N/A';
 
-      // Missed Doses This Week
       const missedDoses = reminders
         .filter(r => {
           const reminderDate = new Date(r.date);
@@ -71,10 +68,9 @@ const MedicationDashboard = () => {
         });
       const missedDosesWeek = missedDoses.length;
 
-      // Monthly Health Score
       const monthlyHealthScore = Math.min(100, Math.max(0, 100 - missedDosesWeek * 5));
 
-      // Medication Types
+      // Calculate medication types
       const typeCounts = {};
       medicationData.forEach(med => {
         let type = 'Others';
@@ -96,10 +92,10 @@ const MedicationDashboard = () => {
         typeCounts[type] = (typeCounts[type] || 0) + 1;
       });
 
-      const totalTypes = Object.values(typeCounts).reduce((sum, count) => sum + count, 0);
+      const totalTypes = Object.values(typeCounts).reduce((sum, count) => sum + count, 0) || 0;
       const medicationTypes = Object.entries(typeCounts).map(([name, count]) => ({
         name,
-        percentage: Math.round((count / totalTypes) * 100),
+        percentage: totalTypes ? (count / totalTypes) * 100 : 0,
         color: name === 'Painkillers' ? '#FF6B6B' :
                name === 'Antibiotics' ? '#4ECDC4' :
                name === 'Hormonal' ? '#FF9F1C' :
@@ -115,10 +111,8 @@ const MedicationDashboard = () => {
                name === 'Cholesterol' ? '📉' : '🏥',
       }));
 
-      // Today's Medications
       const todaysMedications = reminders
-      .filter(r => isToday(r.date) && r.title?.includes('Take'))
-
+        .filter(r => isToday(r.date) && r.title?.includes('Take'))
         .map(r => {
           const medication = medicationData.find(m => m.name === r.medication) || {};
           return {
@@ -140,21 +134,129 @@ const MedicationDashboard = () => {
         missedDoses,
         upcomingRefills,
       });
+      console.log('Dashboard Data Updated:', { medicationTypes, totalTypes, medicationData });
       setLoading(false);
     };
 
-    if (prescriptionHistory.length > 0 || medicationData.length > 0 || reminders.length > 0) {
+    console.log('Context Data:', { prescriptionHistory, medicationData, reminders });
+    if (medicationData.length > 0) {
       deriveDashboardData();
     } else {
-      setLoading(false); // If no data, stop loading
+      setDashboardData(prev => ({
+        ...prev,
+        medicationTypes: [],
+        totalMedications: 0,
+        todaysMedications: [],
+        missedDoses: [],
+        upcomingRefills: [],
+        nextRefillDate: 'N/A',
+        missedDosesWeek: 0,
+        monthlyHealthScore: 0,
+      }));
+      console.log('No medication data, resetting dashboard');
+      setLoading(false);
     }
   }, [prescriptionHistory, medicationData, reminders]);
 
-  const extractMedicationsFromStructuredText = (structuredText) => {
-    if (!structuredText || typeof structuredText !== 'string') {
-      return [];
+  const InteractivePieChart = ({ data }) => {
+    if (!data || data.length === 0 || data.every(segment => segment.count === 0)) {
+      console.log('PieChart: No valid data to display', data);
+      return (
+        <div className="relative w-full aspect-square flex items-center justify-center text-slate-500">
+          <p>No medication types to display</p>
+        </div>
+      );
     }
 
+    // Normalize percentages to sum to 100
+    const totalPercentage = data.reduce((sum, segment) => sum + segment.percentage, 0) || 1;
+    const adjustedData = data.map(segment => ({
+      ...segment,
+      percentage: (segment.percentage / totalPercentage) * 100,
+    }));
+
+    console.log('PieChart Adjusted Data:', adjustedData);
+
+    return (
+      <div className="relative w-full aspect-square">
+        <svg viewBox="0 0 100 100" className="w-full h-full">
+          {adjustedData.map((segment, index) => {
+            const percentage = Math.max(segment.percentage, 0.5); // Ensure visibility
+            const startAngle = index === 0 ? 0 : adjustedData.slice(0, index).reduce((sum, s) => sum + Math.max(s.percentage, 0.5) * 3.6, 0);
+            const endAngle = startAngle + percentage * 3.6;
+
+            const startRad = ((startAngle - 90) * Math.PI) / 180;
+            const endRad = ((endAngle - 90) * Math.PI) / 180;
+            const radius = activeSegment === index ? 45 : 40;
+            const x1 = 50 + radius * Math.cos(startRad);
+            const y1 = 50 + radius * Math.sin(startRad);
+            const x2 = 50 + radius * Math.cos(endRad);
+            const y2 = 50 + radius * Math.sin(endRad);
+            const largeArcFlag = percentage > 50 ? 1 : 0;
+
+            const path = `M 50 50 L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2} Z`;
+
+            const midRad = (startRad + endRad) / 2;
+            const labelRadius = radius * 0.7;
+            const labelX = 50 + labelRadius * Math.cos(midRad);
+            const labelY = 50 + labelRadius * Math.sin(midRad);
+
+            console.log(`Segment ${index}:`, { name: segment.name, percentage, startAngle, endAngle });
+
+            return (
+              <g key={index}>
+                <path
+                  d={path}
+                  fill={segment.color}
+                  stroke="#1a1e2e"
+                  strokeWidth="0.5"
+                  onMouseEnter={() => setActiveSegment(index)}
+                  onMouseLeave={() => setActiveSegment(null)}
+                  className="transition-all duration-300 cursor-pointer"
+                  style={{ transform: activeSegment === index ? 'scale(1.05)' : 'scale(1)', transformOrigin: '50% 50%' }}
+                />
+                {percentage >= 5 && (
+                  <text
+                    x={labelX}
+                    y={labelY}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill="white"
+                    fontSize="4"
+                    fontWeight="bold"
+                    style={{ textShadow: '0px 0px 2px rgba(0,0,0,0.8)' }}
+                  >
+                    {Math.round(percentage)}%
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          <circle cx="50" cy="50" r="20" fill="#1e293b" stroke="#0f172a" strokeWidth="0.5" />
+        </svg>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center">
+          {activeSegment !== null ? (
+            <>
+              <div className="text-4xl mb-1">{adjustedData[activeSegment].emoji}</div>
+              <div className="text-xs font-bold">{adjustedData[activeSegment].name}</div>
+              <div className="text-lg font-bold text-indigo-400">{Math.round(adjustedData[activeSegment].percentage)}%</div>
+              <div className="text-xs text-slate-400">{adjustedData[activeSegment].count} meds</div>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl mb-1">💊</div>
+              <div className="text-xs font-bold">Total</div>
+              <div className="text-lg font-bold text-indigo-400">{adjustedData.reduce((sum, type) => sum + type.count, 0)}</div>
+              <div className="text-xs text-slate-400">medications</div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const extractMedicationsFromStructuredText = (structuredText) => {
+    if (!structuredText || typeof structuredText !== 'string') return [];
     const lines = structuredText.split('\n');
     const medications = [];
     let inMedicationSection = false;
@@ -177,112 +279,43 @@ const MedicationDashboard = () => {
     }
     return medications;
   };
-  const InteractivePieChart = ({ data: chartData }) => {
-    const [activeSegment, setActiveSegment] = useState(null);
-  
-    // Log the incoming data for debugging
-    console.log('PieChart Data:', chartData);
-  
-    // Handle edge cases
-    if (!chartData || chartData.length === 0 || chartData.every(segment => segment.percentage === 0)) {
-      return (
-        <div className="relative w-full aspect-square flex items-center justify-center text-slate-500">
-          <p>No medication types to display</p>
-        </div>
-      );
-    }
-  
-    let cumulativeAngle = 0;
-  
-    const handleSegmentHover = (index) => setActiveSegment(index);
-    const handleSegmentLeave = () => setActiveSegment(null);
-  
-    return (
-      <div className="relative w-full aspect-square">
-        <svg viewBox="0 0 100 100" className="w-full h-full">
-          <defs>
-            {chartData.map((segment, index) => (
-              <filter key={`shadow-${index}`} id={`shadow-${index}`} x="-20%" y="-20%" width="140%" height="140%">
-                <feDropShadow dx="0" dy="0" stdDeviation="2" floodColor={segment.color} floodOpacity="0.5" />
-              </filter>
-            ))}
-          </defs>
-          {chartData.map((segment, index) => {
-            const startAngle = cumulativeAngle;
-            const percentage = Math.max(segment.percentage, 1); // Ensure minimum percentage for visibility
-            cumulativeAngle += percentage * 3.6; // 360 degrees / 100% = 3.6 degrees per percent
-            const endAngle = cumulativeAngle;
-  
-            const startRad = ((startAngle - 90) * Math.PI) / 180;
-            const endRad = ((endAngle - 90) * Math.PI) / 180;
-            const midRad = (startRad + endRad) / 2;
-            const midX = 50 + (activeSegment === index ? 5 : 0) * Math.cos(midRad);
-            const midY = 50 + (activeSegment === index ? 5 : 0) * Math.sin(midRad);
-            const radius = activeSegment === index ? 45 : 40;
-            const x1 = midX + radius * Math.cos(startRad);
-            const y1 = midY + radius * Math.sin(startRad);
-            const x2 = midX + radius * Math.cos(endRad);
-            const y2 = midY + radius * Math.sin(endRad);
-            const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
-            const path = `M ${midX} ${midY} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2} Z`;
-  
-            const labelRadius = radius * 0.7;
-            const labelX = midX + labelRadius * Math.cos(midRad);
-            const labelY = midY + labelRadius * Math.sin(midRad);
-  
-            return (
-              <g key={index}>
-                <path
-                  d={path}
-                  fill={segment.color || '#D3D3D3'} // Fallback color
-                  stroke="#1a1e2e"
-                  strokeWidth="0.5"
-                  onMouseEnter={() => handleSegmentHover(index)}
-                  onMouseLeave={handleSegmentLeave}
-                  filter={activeSegment === index ? `url(#shadow-${index})` : ''}
-                  className="transition-all duration-300 cursor-pointer"
-                  style={{ transform: activeSegment === index ? 'scale(1.05)' : 'scale(1)', transformOrigin: '50% 50%' }}
-                />
-                {percentage >= 8 && (
-                  <text
-                    x={labelX}
-                    y={labelY}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill="white"
-                    fontSize={activeSegment === index ? '6' : '4'}
-                    fontWeight="bold"
-                    style={{ textShadow: '0px 0px 2px rgba(0,0,0,0.8)', transition: 'all 0.3s ease' }}
-                  >
-                    {percentage}%
-                  </text>
-                )}
-              </g>
-            );
-          })}
-          <circle cx="50" cy="50" r="20" fill="#1e293b" stroke="#0f172a" strokeWidth="0.5">
-            <animate attributeName="r" from="19" to="20" dur="2s" repeatCount="indefinite" />
-          </circle>
-        </svg>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center">
-          {activeSegment !== null ? (
-            <>
-              <div className="text-4xl mb-1">{chartData[activeSegment].emoji}</div>
-              <div className="text-xs font-bold">{chartData[activeSegment].name}</div>
-              <div className="text-lg font-bold text-blue-400">{chartData[activeSegment].percentage}%</div>
-              <div className="text-xs text-gray-400">{chartData[activeSegment].count} meds</div>
-            </>
-          ) : (
-            <>
-              <div className="text-2xl mb-1">💊</div>
-              <div className="text-xs font-bold">Total</div>
-              <div className="text-lg font-bold text-blue-400">{dashboardData.totalMedications}</div>
-              <div className="text-xs text-gray-400">medications</div>
-            </>
-          )}
-        </div>
-      </div>
-    );
+
+  const checkDrugInteractions = (newMedications, existingMeds) => {
+    const interactions = [];
+    const allMeds = [...existingMeds, ...newMedications];
+    const interactionRules = {
+      'Aspirin': ['Ibuprofen', 'Warfarin'],
+      'Metformin': ['Cimetidine'],
+      'Ibuprofen': ['Aspirin'],
+    };
+
+    allMeds.forEach(med1 => {
+      allMeds.forEach(med2 => {
+        if (med1.name !== med2.name && interactionRules[med1.name]?.includes(med2.name)) {
+          interactions.push({
+            med1: med1.name,
+            med2: med2.name,
+            warning: `Potential interaction between ${med1.name} and ${med2.name}`,
+          });
+        }
+      });
+    });
+    return interactions;
+  };
+
+  const getMedicationsForDate = (dateString) => {
+    return reminders
+      .filter(r => r.date === dateString && r.title?.includes('Take'))
+      .map(r => {
+        const medication = medicationData.find(m => m.name === r.medication) || {};
+        return {
+          id: r.id,
+          name: r.medication,
+          time: r.time,
+          taken: r.completed,
+          type: medication.description || 'Unknown',
+        };
+      });
   };
 
   const handleMarkAsTaken = async (medicationId) => {
@@ -349,13 +382,10 @@ const MedicationDashboard = () => {
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to upload prescription');
-      }
+      if (!response.ok) throw new Error('Failed to upload prescription');
 
       const data = await response.json();
 
-      // Update medication data
       if (data.generic_predictions) {
         const newMedications = Object.entries(data.generic_predictions).map(([name, type]) => ({
           id: Date.now() + Math.random(),
@@ -365,16 +395,21 @@ const MedicationDashboard = () => {
           sideEffects: 'Consult your doctor about potential side effects',
         }));
 
+        const interactions = checkDrugInteractions(newMedications, medicationData);
+        if (interactions.length > 0) {
+          alert('Warning: Potential drug interactions detected:\n' + 
+            interactions.map(i => i.warning).join('\n'));
+        }
+        setInteractions(interactions);
+
         setMedicationData(prevMeds => {
           const existingNames = prevMeds.map(med => med.name);
           const uniqueNewMeds = newMedications.filter(med => !existingNames.includes(med.name));
+          console.log('New Medications Added:', uniqueNewMeds);
           return [...prevMeds, ...uniqueNewMeds];
         });
 
-        // Extract medications from structured text
         const medications = extractMedicationsFromStructuredText(data.structured_text);
-
-        // Create reminders for new medications
         const today = new Date();
         const newReminders = medications.map((med, index) => ({
           id: Date.now() + index,
@@ -386,10 +421,8 @@ const MedicationDashboard = () => {
           title: `Take ${med.medicineName} (${med.frequency})`,
         }));
 
-        // Add refill reminders
         const refillDate = new Date();
         refillDate.setDate(refillDate.getDate() + 30);
-
         medications.forEach((med, index) => {
           newReminders.push({
             id: Date.now() + 100 + index,
@@ -403,8 +436,6 @@ const MedicationDashboard = () => {
         });
 
         setReminders(prevReminders => [...prevReminders, ...newReminders]);
-
-        // Update prescription history
         setPrescriptionHistory(prevHistory => [
           {
             id: Date.now(),
@@ -455,8 +486,6 @@ const MedicationDashboard = () => {
           </div>
         ) : (
           <>
-            {/* Removed Latest Prescription Summary since it’s handled in PrescriptionAnalyzer */}
-            {/* KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               {[
                 { title: 'Total Medications', value: dashboardData.totalMedications, icon: '💊', color: 'indigo' },
@@ -483,9 +512,7 @@ const MedicationDashboard = () => {
               ))}
             </div>
 
-            {/* Main Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Left Column */}
               <div className="space-y-6">
                 <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800/50 hover:border-indigo-800/30 transition-all min-h-[400px] flex flex-col">
                   <div className="p-5 bg-slate-800/50 flex items-center border-b border-slate-700">
@@ -508,15 +535,19 @@ const MedicationDashboard = () => {
                         const day = i - firstDay + 1;
                         const isCurrentMonth = day > 0 && day <= daysInMonth;
                         const isToday = day === today.getDate() && isCurrentMonth;
-                        const hasMedication = isCurrentMonth && dashboardData.todaysMedications.some(
-                          med => new Date(med.date).getDate() === day
+                        const dateString = isCurrentMonth
+                          ? new Date(currentYear, currentMonth, day).toISOString().split('T')[0]
+                          : null;
+                        const hasMedication = isCurrentMonth && reminders.some(
+                          r => r.date === dateString && r.title?.includes('Take')
                         );
 
                         return (
                           <div
                             key={i}
-                            className={`aspect-square flex flex-col items-center justify-center rounded-lg text-xs 
-                              ${isCurrentMonth ? 'bg-slate-800' : 'bg-slate-800/30 text-slate-600'} 
+                            onClick={() => isCurrentMonth && setSelectedDate(dateString)}
+                            className={`aspect-square flex flex-col items-center justify-center rounded-lg text-xs cursor-pointer
+                              ${isCurrentMonth ? 'bg-slate-800 hover:bg-indigo-800/30' : 'bg-slate-800/30 text-slate-600'}
                               ${isToday ? 'border-2 border-indigo-500' : 'border border-slate-700'}
                               ${hasMedication ? 'ring-2 ring-indigo-500/40' : ''}`}
                           >
@@ -531,6 +562,52 @@ const MedicationDashboard = () => {
                   </div>
                 </div>
 
+                {selectedDate && (
+                  <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800/50 p-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="font-bold text-lg text-indigo-400">
+                        Medications for {new Date(selectedDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}
+                      </h3>
+                      <button
+                        onClick={() => setSelectedDate(null)}
+                        className="text-slate-400 hover:text-white"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                      {getMedicationsForDate(selectedDate).length === 0 ? (
+                        <div className="text-center py-4 text-slate-500">
+                          <p>No medications scheduled</p>
+                        </div>
+                      ) : (
+                        getMedicationsForDate(selectedDate).map((med, index) => (
+                          <div
+                            key={index}
+                            className="flex items-center justify-between p-3 bg-slate-800 rounded-lg border border-slate-700"
+                          >
+                            <div className="flex items-center">
+                              <div className="p-2 mr-3 rounded-full bg-indigo-900/40 text-indigo-400">
+                                💊
+                              </div>
+                              <div>
+                                <h4 className="font-medium text-slate-200">{med.name}</h4>
+                                <p className="text-xs text-slate-500">{med.type}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center">
+                              <span className="text-slate-400 mr-4 text-sm">{med.time}</span>
+                              <span className={`text-sm ${med.taken ? 'text-green-400' : 'text-rose-400'}`}>
+                                {med.taken ? 'Taken ✓' : 'Pending'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800/50 hover:border-indigo-800/30 transition-all">
                   <div className="p-5 bg-slate-800/50 flex items-center border-b border-slate-700">
                     <PieChart className="mr-3 text-indigo-400" />
@@ -540,9 +617,21 @@ const MedicationDashboard = () => {
                     <InteractivePieChart data={dashboardData.medicationTypes} />
                   </div>
                 </div>
+
+                {interactions.length > 0 && (
+                  <div className="bg-slate-900 rounded-xl shadow-xl border border-red-800/50 p-6">
+                    <h2 className="font-bold text-lg text-rose-400 mb-4">Drug Interaction Warnings</h2>
+                    <ul className="space-y-2">
+                      {interactions.map((interaction, index) => (
+                        <li key={index} className="text-sm text-slate-200">
+                          {interaction.warning}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
 
-              {/* Right Column (spans 2 columns) */}
               <div className="lg:col-span-2 space-y-6">
                 <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800/50 hover:border-indigo-800/30 transition-all">
                   <div className="p-5 bg-slate-800/50 flex justify-between items-center border-b border-slate-700">
@@ -603,7 +692,7 @@ const MedicationDashboard = () => {
                       <AlertCircle className="mr-3 text-rose-400" />
                       <h2 className="font-bold text-lg">Missed Doses</h2>
                     </div>
-                    <div className="p-6 ">
+                    <div className="p-6">
                       {dashboardData.missedDoses.length === 0 ? (
                         <div className="text-center py-8 text-slate-500">
                           <div className="text-4xl mb-2">✓</div>
@@ -631,33 +720,33 @@ const MedicationDashboard = () => {
                   </div>
 
                   <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800/50 hover:border-yellow-800/30 transition-all">
-  <div className="p-5 bg-slate-800/50 flex items-center border-b border-slate-700">
-    <Calendar className="mr-3 text-amber-400" />
-    <h2 className="font-bold text-lg">Upcoming Refills</h2>
-  </div>
-  <div className="p-6"> {/* Removed max-h-64 and overflow-y-auto */}
-    {dashboardData.upcomingRefills.length === 0 ? (
-      <div className="text-center py-8 text-slate-500">
-        <div className="text-4xl mb-2">✓</div>
-        <p>No upcoming refills</p>
-      </div>
-    ) : (
-      <div className="space-y-3">
-        {dashboardData.upcomingRefills.map((refill, index) => (
-          <div key={index} className="flex items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
-            <div className="p-2 mr-3 rounded-full bg-amber-900/40 border border-amber-800/40 text-amber-400 text-xl">
-              📅
-            </div>
-            <div>
-              <h3 className="font-medium text-slate-200">{refill.name}</h3>
-              <div className="text-xs text-slate-500">Refill on {refill.date}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
-</div>
+                    <div className="p-5 bg-slate-800/50 flex items-center border-b border-slate-700">
+                      <Calendar className="mr-3 text-amber-400" />
+                      <h2 className="font-bold text-lg">Upcoming Refills</h2>
+                    </div>
+                    <div className="p-6">
+                      {dashboardData.upcomingRefills.length === 0 ? (
+                        <div className="text-center py-8 text-slate-500">
+                          <div className="text-4xl mb-2">✓</div>
+                          <p>No upcoming refills</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {dashboardData.upcomingRefills.map((refill, index) => (
+                            <div key={index} className="flex items-center p-3 bg-slate-800 rounded-lg border border-slate-700">
+                              <div className="p-2 mr-3 rounded-full bg-amber-900/40 border border-amber-800/40 text-amber-400 text-xl">
+                                📅
+                              </div>
+                              <div>
+                                <h3 className="font-medium text-slate-200">{refill.name}</h3>
+                                <div className="text-xs text-slate-500">Refill on {refill.date}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
