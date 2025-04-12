@@ -11,7 +11,6 @@ const Sidebar = ({ isSidebarOpen, setSidebarOpen }) => {
     { icon: <FileText size={20} />, label: "Prescription Analyzer", path: "/prescription" },
     { icon: <Calendar size={20} />, label: "Reminders", path: "/reminders" },
     { icon: <User size={20} />, label: "Profile", path: "/profile" },
-    { icon: <Settings size={20} />, label: "Settings", path: "/settings" },
     { icon: <HelpCircle size={20} />, label: "Help", path: "/help" },
   ];
   
