@@ -21,20 +21,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins to prevent CORS issues
+model_path = os.path.join(BASE_DIR, "medicine_model.pkl")
+encoder_path = os.path.join(BASE_DIR, "label_encoders.pkl")
 
-# Load the trained model and label encoders
-try:
-    with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\medicine_model.pkl", "rb") as model_file:
-        model = pickle.load(model_file)
-    with open(r"C:\Users\kanishkhaa\OneDrive\Desktop\codher\ml_model\label_encoders.pkl", "rb") as le_file:
-        label_encoders = pickle.load(le_file)
-except FileNotFoundError as e:
-    app.logger.error(f"Model or label encoder file not found: {e}")
-    raise
+with open(model_path, "rb") as model_file:
+    model = pickle.load(model_file)
 
+with open(encoder_path, "rb") as encoder_file:
+    label_encoders = pickle.load(encoder_file)
 # Configure Google Generative AI API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
