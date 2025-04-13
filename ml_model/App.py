@@ -545,4 +545,4 @@ def get_drug_alternatives(drug_name):
         return jsonify({"error": f"Failed to fetch alternatives: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=10000, debug=True)
