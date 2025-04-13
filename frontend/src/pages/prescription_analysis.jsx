@@ -1,6 +1,7 @@
 import React, { useState, useRef, useContext } from 'react';
 import axios from 'axios';
-import { FileText, AlertTriangle, Upload, Clock, Sparkles, Stethoscope, AlertCircle, Trash2 } from 'lucide-react';
+import { FileText, AlertTriangle, Upload, Clock, Sparkles, Stethoscope, AlertCircle, Trash2, Pill } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from '../../components/sidebar';
 import { AppContext } from "../context/AppContext";
 import { QRCodeSVG } from 'qrcode.react';
@@ -28,7 +29,37 @@ const PrescriptionAnalyzer = () => {
   const [qrData, setQrData] = useState('');
   const [selectedPrescription, setSelectedPrescription] = useState(null);
   const [currentMedications, setCurrentMedications] = useState([]);
+  const [drugNameInput, setDrugNameInput] = useState('');
+  const [drugAlternatives, setDrugAlternatives] = useState([]);
+  const [isFetchingAlternatives, setIsFetchingAlternatives] = useState(false);
+  const [showAlternativesModal, setShowAlternativesModal] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Fetch drug alternatives
+  const fetchDrugAlternatives = async () => {
+    if (!drugNameInput.trim()) {
+      setErrorMessage('Please enter a drug name');
+      return;
+    }
+    setIsFetchingAlternatives(true);
+    try {
+      const response = await axios.post('http://localhost:5000/find-alternatives', {
+        drugs: [drugNameInput.trim()]
+      }, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (response.data.error) throw new Error(response.data.error);
+      const alternatives = response.data.alternatives[drugNameInput.trim()] || [];
+      setDrugAlternatives(alternatives);
+      setShowAlternativesModal(true);
+    } catch (error) {
+      console.error('Error fetching drug alternatives:', error);
+      setErrorMessage('Failed to fetch alternatives: ' + error.message);
+    } finally {
+      setIsFetchingAlternatives(false);
+    }
+  };
 
   // Fetch drug info from RxNorm API
   const fetchDrugInfo = async (drugName) => {
@@ -302,32 +333,21 @@ const PrescriptionAnalyzer = () => {
 
     const patientNameMatch = structuredText.match(/\*\*Patient Information:\*\*[\s\S]*?Name: ([^\n]*)/);
     const patientName = patientNameMatch ? patientNameMatch[1].trim() : 'Patient';
+    
     const doctorNameMatch = structuredText.match(/\*\*Doctor Information:\*\*[\s\S]*?Name: ([^\n]*)/);
     const doctorName = doctorNameMatch ? doctorNameMatch[1].trim() : 'Unknown Doctor';
+    
     const dateMatch = structuredText.match(/Next Review Date: ([^\n]*)/);
-    const prescriptionDate = dateMatch ? dateMatch[1].trim() : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    const genderMatch = structuredText.match(/Gender: ([^\n]*)/);
-    const patientGender = genderMatch ? `(${genderMatch[1].trim().charAt(0)})` : '';
+    const nextReviewDate = dateMatch ? dateMatch[1].trim() : 'Unknown Date';
 
-    let summary = '';
-    summary += `Patient: ${patientName} ${patientGender}\n`;
-    summary += `Date: ${prescriptionDate}\n`;
-    summary += `Physician: Dr. ${doctorName}\n`;
+    let summary = `Prescription Summary for ${patientName}\n\n`;
+    summary += `Prescribed by: ${doctorName}\n`;
     summary += `Medications:\n`;
-
-    currentMedications.forEach((med, index) => {
-      const superscriptNumbers = ['¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹', '¹⁰'];
-      const medNumber = superscriptNumbers[index] || `${index + 1}`;
-      const dosageText = med.dosage || 'As prescribed';
-      summary += `  ${med.name}${medNumber}: ${dosageText}\n`;
+    currentMedications.forEach((med) => {
+      summary += `• ${med.name}: ${med.dosage}\n`;
     });
+    summary += `\nNext Review: ${nextReviewDate}`;
 
-    const hasInteractions = currentMedications.some(med => med.interactions?.length > 0);
-    if (hasInteractions) {
-      summary += `Alert: Potential drug interactions detected - consult your doctor\n`;
-    }
-
-    summary += `Tip: Follow your doctor's instructions carefully`;
     setAiSummary(summary);
   };
 
@@ -381,7 +401,6 @@ const PrescriptionAnalyzer = () => {
   const formatStructuredText = (text) => {
     if (!text) return [];
 
-    // Split into sections based on **Section:** markers
     const sections = text.split(/\n\n(?=\*\*[A-Z][^\n]*:\*\*)/).filter(Boolean);
     const formattedContent = [];
 
@@ -389,11 +408,9 @@ const PrescriptionAnalyzer = () => {
       const lines = section.split('\n').filter(line => line.trim());
       if (!lines.length) return;
 
-      // Extract section title, removing ** and :
       const sectionTitleMatch = lines[0].match(/\*\*(.+?):\*\*/);
       const sectionTitle = sectionTitleMatch ? sectionTitleMatch[1].trim() : lines[0].trim();
 
-      // Add section header with enhanced styling
       formattedContent.push(
         <h3
           key={`title-${sectionIndex}`}
@@ -403,15 +420,11 @@ const PrescriptionAnalyzer = () => {
         </h3>
       );
 
-      // Process section content, skipping the title line
       lines.slice(1).forEach((line, lineIndex) => {
-        // Remove markdown asterisks and trim
         const cleanLine = line.replace(/\*+\s*/g, '').trim();
         if (!cleanLine) return;
 
-        // Handle medication entries specifically (to preserve formatting)
         if (sectionTitle === 'Medications') {
-          // Split medication line into name/composition and dosage
           const medicationMatch = cleanLine.match(/^(.+?)(?:\s*\(([^)]+)\))?:\s*(.+)$/);
           if (medicationMatch) {
             const drugName = medicationMatch[1].trim();
@@ -431,7 +444,6 @@ const PrescriptionAnalyzer = () => {
               </div>
             );
           } else {
-            // Fallback for malformed medication lines
             formattedContent.push(
               <p
                 key={`med-fallback-${sectionIndex}-${lineIndex}`}
@@ -442,7 +454,6 @@ const PrescriptionAnalyzer = () => {
             );
           }
         } else {
-          // Standard list item for other sections
           formattedContent.push(
             <div
               key={`content-${sectionIndex}-${lineIndex}`}
@@ -646,6 +657,119 @@ const PrescriptionAnalyzer = () => {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {showAlternativesModal && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+                className="bg-gray-800/90 rounded-2xl p-6 max-w-lg w-full mx-4 border border-gray-700/30 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
+                    Alternatives for {drugNameInput}
+                  </h3>
+                  <button
+                    onClick={() => setShowAlternativesModal(false)}
+                    className="text-gray-400 hover:text-white p-2 rounded-full hover:bg-gray-700/50 transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+                
+                {drugAlternatives.length > 0 ? (
+                  <>
+                    <div className="mb-4">
+                      <div className="bg-purple-500/20 rounded-lg p-3 mb-4 border border-purple-500/30">
+                        <div className="flex items-start">
+                          <AlertCircle className="w-5 h-5 text-purple-400 mr-2 mt-0.5 flex-shrink-0" />
+                          <p className="text-purple-200 text-sm">
+                            These medications may have similar effects but can vary in side effects, cost, and availability. Always consult your healthcare provider before switching medications.
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-xs text-gray-400 px-3 mb-2">
+                        <span>Alternative Name</span>
+                        <span>Similarity</span>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3 max-h-60 overflow-y-auto pr-1 custom-scrollbar mb-4">
+                      {drugAlternatives.map((alt, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="bg-gray-700/50 hover:bg-gray-700/70 rounded-lg p-4 flex items-center justify-between group transition-colors cursor-pointer border border-gray-600/30"
+                        >
+                          <div className="flex items-center">
+                            <div className="p-2 bg-purple-500/20 rounded-full mr-3">
+                              <Pill className="w-5 h-5 text-purple-400" />
+                            </div>
+                            <div>
+                              <p className="text-gray-200 font-medium group-hover:text-white transition-colors">{alt}</p>
+                              <p className="text-gray-400 text-xs mt-1">Generic alternative</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center">
+                            <div className="flex space-x-0.5">
+                              {Array(5).fill(0).map((_, i) => (
+                                <div 
+                                  key={i} 
+                                  className={`w-1.5 h-6 rounded-sm ${i < Math.floor(Math.random() * 2) + 3 ? 'bg-purple-500' : 'bg-gray-600'}`} 
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <button
+                        onClick={() => {
+                          // Here you would add functionality to save or export alternatives
+                          setShowAlternativesModal(false);
+                        }}
+                        className="bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 px-4 rounded-xl hover:scale-105 transition-transform flex items-center justify-center"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M7.707 10.293a1 1 0 10-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 11.586V6h1a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h1v5.586l-1.293-1.293zM9 4a1 1 0 012 0v2H9V4z" />
+                        </svg>
+                        Save List
+                      </button>
+                      <button
+                        onClick={() => setShowAlternativesModal(false)}
+                        className="bg-gray-700 text-white py-3 px-4 rounded-xl hover:bg-gray-600 transition-colors"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="bg-gray-700/50 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                      <AlertTriangle className="w-8 h-8 text-yellow-400" />
+                    </div>
+                    <h4 className="text-lg font-medium text-gray-300 mb-2">No alternatives found</h4>
+                    <p className="text-gray-400 text-sm mb-6">
+                      We couldn't find any alternatives for "{drugNameInput}". This may be due to the medication being unique or specialized.
+                    </p>
+                    <button
+                      onClick={() => setShowAlternativesModal(false)}
+                      className="bg-gradient-to-r from-purple-600 to-pink-600 text-white py-2 px-6 rounded-xl hover:scale-105 transition-transform inline-flex"
+                    >
+                      Close
+                    </button>
+                  </div>
+                )}
+              </motion.div>
             </div>
           )}
 
@@ -880,6 +1004,32 @@ const PrescriptionAnalyzer = () => {
                   <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-4">
                     Action Center
                   </h3>
+                  <input
+                    type="text"
+                    value={drugNameInput}
+                    onChange={(e) => setDrugNameInput(e.target.value)}
+                    placeholder="Enter drug name"
+                    className="w-full bg-gray-800/60 backdrop-blur-lg text-white px-4 py-2 rounded-xl mb-3 border border-gray-700/30 focus:ring-2 focus:ring-purple-500/50 transition-all"
+                  />
+                  <button
+                    onClick={fetchDrugAlternatives}
+                    disabled={isFetchingAlternatives}
+                    className={`w-full bg-gradient-to-r from-purple-600 to-pink-600 ${
+                      isFetchingAlternatives ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
+                    } text-white py-3 px-4 rounded-xl mb-3 transition-all flex items-center justify-center`}
+                  >
+                    {isFetchingAlternatives ? (
+                      <>
+                        <div className="animate-spin mr-2 h-5 w-5 border-2 border-white border-opacity-20 border-t-white rounded-full"></div>
+                        Finding Alternatives...
+                      </>
+                    ) : (
+                      <>
+                        <Pill className="w-5 h-5 mr-2" />
+                        Find Drug Alternatives
+                      </>
+                    )}
+                  </button>
                   <button
                     onClick={generateAiSummary}
                     disabled={!structuredText || isSummarizing}

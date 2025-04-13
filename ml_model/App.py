@@ -8,6 +8,8 @@ import pandas as pd
 import json
 import requests
 import secrets
+import re
+from collections import defaultdict
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -59,6 +61,7 @@ os.makedirs(DOCS_FOLDER, exist_ok=True)
 PRESCRIPTIONS_FILE = os.path.join(DATA_FOLDER, 'prescriptions.json')
 MEDICATIONS_FILE = os.path.join(DATA_FOLDER, 'medications.json')
 REMINDERS_FILE = os.path.join(DATA_FOLDER, 'reminders.json')
+ALTERNATIVES_FILE = os.path.join(DATA_FOLDER, 'drug_alternatives.json')
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -136,6 +139,62 @@ def save_json(file_path, data):
     except Exception as e:
         app.logger.error(f"Error saving JSON to {file_path}: {e}")
 
+# Drug alternatives functionality
+def extract_drug_names(text):
+    # Tokenize and clean
+    words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
+    # Filter out common non-medical words
+    blacklist = {"take", "tablet", "for", "days", "and", "if", "the", "a", "of", "to", "patient", "should", "is"}
+    potential_drugs = [word for word in words if word not in blacklist and len(word) > 3]
+    return list(set(potential_drugs))
+
+def get_rxcui(drug_name):
+    url = f"https://rxnav.nlm.nih.gov/REST/rxcui.json?name={drug_name}"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("idGroup", {}).get("rxnormId", [None])[0]
+    except Exception as e:
+        app.logger.error(f"Error getting RxCUI for {drug_name}: {e}")
+    return None
+
+def get_brand_names(rxcui):
+    if not rxcui:
+        return []
+    
+    url = f"https://rxnav.nlm.nih.gov/REST/rxcui/{rxcui}/related.json?tty=BN"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            concept_group = data.get("relatedGroup", {}).get("conceptGroup", [])
+            brands = []
+            for group in concept_group:
+                concepts = group.get("conceptProperties", [])
+                for concept in concepts:
+                    brands.append(concept["name"])
+            return brands
+    except Exception as e:
+        app.logger.error(f"Error getting brand names for RxCUI {rxcui}: {e}")
+    return []
+
+def fetch_alternatives(drug_names):
+    result = defaultdict(list)
+    for drug in drug_names:
+        app.logger.info(f"Searching alternatives for: {drug}...")
+        rxcui = get_rxcui(drug)
+        if not rxcui:
+            app.logger.warning(f"RxCUI not found for '{drug}'")
+            continue
+        brands = get_brand_names(rxcui)
+        if brands:
+            app.logger.info(f"Found {len(brands)} alternatives for '{drug}'")
+            result[drug] = brands
+        else:
+            app.logger.warning(f"No brand names found for '{drug}'")
+    return result
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -204,11 +263,21 @@ def upload_file():
             })
         save_json(REMINDERS_FILE, reminders)
 
+        # Find alternatives for medications
+        drug_names = list(structured_data["generic_predictions"].keys())
+        alternatives = fetch_alternatives(drug_names)
+        
+        # Save alternatives
+        alternatives_data = load_json(ALTERNATIVES_FILE, {})
+        alternatives_data.update(alternatives)
+        save_json(ALTERNATIVES_FILE, alternatives_data)
+
         return jsonify({
             "filename": filename,
             "extracted_text": extracted_text,
             "structured_text": structured_data["structured_text"],
-            "generic_predictions": structured_data["generic_predictions"]
+            "generic_predictions": structured_data["generic_predictions"],
+            "alternatives": alternatives
         })
     except Exception as e:
         app.logger.error(f"Error processing upload: {e}")
@@ -422,6 +491,60 @@ def chat_gemini():
     except Exception as e:
         app.logger.error(f"Error in chat-gemini: {str(e)}")
         return jsonify({"error": f"Failed to process chat request: {str(e)}"}), 500
+
+@app.route('/find-alternatives', methods=['POST'])
+def find_alternatives():
+    try:
+        data = request.get_json()
+        if not data or 'drugs' not in data:
+            return jsonify({"error": "Drug names are required"}), 400
+
+        # Option 1: Use specific drug names provided in the request
+        if isinstance(data['drugs'], list) and data['drugs']:
+            drug_names = data['drugs']
+        # Option 2: Extract from prescription text
+        elif 'prescription_text' in data and data['prescription_text']:
+            drug_names = extract_drug_names(data['prescription_text'])
+        else:
+            return jsonify({"error": "No valid drug names or prescription text provided"}), 400
+
+        if not drug_names:
+            return jsonify({"error": "No valid drug names found"}), 400
+
+        # Find alternatives
+        alternatives = fetch_alternatives(drug_names)
+        
+        # Save to file
+        alternatives_data = load_json(ALTERNATIVES_FILE, {})
+        alternatives_data.update(alternatives)
+        save_json(ALTERNATIVES_FILE, alternatives_data)
+        
+        return jsonify({"alternatives": alternatives})
+    except Exception as e:
+        app.logger.error(f"Error finding alternatives: {str(e)}")
+        return jsonify({"error": f"Failed to find alternatives: {str(e)}"}), 500
+
+@app.route('/get-all-alternatives', methods=['GET'])
+def get_all_alternatives():
+    try:
+        alternatives_data = load_json(ALTERNATIVES_FILE, {})
+        return jsonify({"alternatives": alternatives_data})
+    except Exception as e:
+        app.logger.error(f"Error fetching alternatives: {str(e)}")
+        return jsonify({"error": f"Failed to fetch alternatives: {str(e)}"}), 500
+
+@app.route('/get-alternatives/<drug_name>', methods=['GET'])
+def get_drug_alternatives(drug_name):
+    try:
+        alternatives_data = load_json(ALTERNATIVES_FILE, {})
+        drug_alternatives = alternatives_data.get(drug_name.lower(), [])
+        return jsonify({
+            "drug": drug_name,
+            "alternatives": drug_alternatives
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching alternatives for {drug_name}: {str(e)}")
+        return jsonify({"error": f"Failed to fetch alternatives: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, useAnimation, AnimatePresence } from 'framer-motion';
 import Lottie from "lottie-react";
-import { Award, Shield, Zap, Globe, Heart, Cpu } from 'lucide-react';
+import { Award, Shield, Zap, Globe, Heart, Cpu, ChevronRight,Clock,FileText, Tablet,Database,Calendar,XCircle,ArrowLeftRight ,ChevronLeft, CheckCircle, ArrowRight, AlertCircle ,ClipboardList} from 'lucide-react';
 import healthAnimation from '../lotifi/health-animation.json';
 import reminderAnimation from '../lotifi/reminder-animation.json';
 import analyticsAnimation from '../lotifi/analytics.json';
@@ -38,6 +38,118 @@ const Logo = () => (
     <span className="text-2xl font-bold text-white">SmartRx</span>
   </div>
 );
+
+
+// NEW: Animated Callout Badges Component
+const AnimatedCalloutBadges = () => {
+  const controls = useAnimation();
+  const badges = [
+    {
+      id: 1,
+      label: "AI-Powered",
+      description: "Advanced machine learning algorithms analyze prescriptions and health data",
+      icon: Cpu,
+      color: "cyan"
+    },
+    {
+      id: 2,
+      label: "Secure",
+      description: "Bank-level encryption protects your sensitive health information",
+      icon: Shield,
+      color: "blue"
+    },
+    {
+      id: 3,
+      label: "User-Friendly",
+      description: "Intuitive interface designed for all age groups and tech comfort levels",
+      icon: Heart,
+      color: "emerald"
+    }
+  ];
+  
+  const [activeBadge, setActiveBadge] = useState(0);
+  
+  useEffect(() => {
+    // Animate badges in sequence
+    const interval = setInterval(() => {
+      setActiveBadge(prev => (prev + 1) % badges.length);
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [badges.length]);
+  
+  return (
+    <div className="container mx-auto px-4 py-12 relative z-10">
+      <div className="max-w-5xl mx-auto">
+        <div className="relative">
+          <div className="flex justify-center mb-16">
+            <AnimatePresence mode="wait">
+              {badges.map((badge, index) => (
+                index === activeBadge && (
+                  <motion.div
+                    key={badge.id}
+                    className={`bg-${badge.color}-900/30 border border-${badge.color}-500/50 rounded-xl px-8 py-4 shadow-2xl relative overflow-hidden flex items-center space-x-4 max-w-2xl`}
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -20, scale: 0.9 }}
+                    transition={{ duration: 0.5 }}
+                  >
+                    <div className={`relative rounded-full p-3 bg-${badge.color}-800 text-${badge.color}-200`}>
+                      <badge.icon className="w-8 h-8" />
+                      <motion.div 
+                        className={`absolute inset-0 rounded-full border border-${badge.color}-400/50`} 
+                        animate={{
+                          scale: [1, 1.5, 1],
+                          opacity: [0.8, 0, 0.8]
+                        }}
+                        transition={{
+                          duration: 2,
+                          repeat: Infinity,
+                          ease: "easeInOut"
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <h3 className={`text-xl font-bold text-${badge.color}-400`}>{badge.label}</h3>
+                      <p className="text-gray-300">{badge.description}</p>
+                    </div>
+                    
+                    {/* Decorative elements */}
+                    <motion.div 
+                      className={`absolute -bottom-6 -right-6 w-32 h-32 bg-${badge.color}-500/10 rounded-full filter blur-xl`}
+                      animate={{
+                        scale: [1, 1.2, 1],
+                        opacity: [0.3, 0.5, 0.3]
+                      }}
+                      transition={{
+                        duration: 3,
+                        repeat: Infinity,
+                        ease: "easeInOut"
+                      }}
+                    />
+                  </motion.div>
+                )
+              ))}
+            </AnimatePresence>
+          </div>
+          
+          {/* Badge indicators */}
+          <div className="flex justify-center space-x-2">
+            {badges.map((badge, index) => (
+              <motion.button
+                key={badge.id}
+                className={`w-3 h-3 rounded-full transition-colors duration-300 ${index === activeBadge ? `bg-${badge.color}-500` : 'bg-gray-600'}`}
+                onClick={() => setActiveBadge(index)}
+                whileHover={{ scale: 1.2 }}
+                whileTap={{ scale: 0.9 }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ProcessFlow Component
 const ProcessFlow = () => {
@@ -391,6 +503,9 @@ const Landing = () => {
         }}
       />
 
+      {/* NEW: Animated Callout Badges Section */}
+      <AnimatedCalloutBadges />
+
       <div className="container mx-auto px-4 py-12 relative z-10">
         <h2 className="text-4xl font-bold text-center text-gray-200 mb-15 bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-600">
           Health Management Features
@@ -420,14 +535,40 @@ const Landing = () => {
                   {feature.description}
                 </p>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <ProcessFlow />
-    </div>
-  );
-};
-
-export default Landing;
+              
+              {/* NEW: Feature badge */}
+              {activeFeature === index && (
+                <motion.div 
+                className={`absolute -top-2 -right-2 bg-${feature.color}-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow-lg`}>
+                New
+              </motion.div>
+                            )}
+                            
+                            <motion.div 
+                              className={`absolute bottom-4 right-4 text-${feature.color}-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center space-x-1`}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              whileHover={{ x: 5 }}
+                            >
+                              <span className="text-sm">Learn more</span>
+                              <ArrowRight className="w-4 h-4" />
+                            </motion.div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+              
+                    
+                    
+              
+                    {/* Workflow Section */}
+                    <ProcessFlow />
+              
+                    <footer className="container mx-auto px-4 py-8 mt-16 border-t border-gray-800 text-center text-gray-500">
+                      <p>© 2025 SmartRx Health Technologies. All rights reserved.</p>
+                    </footer>
+                  </div>
+                );
+              };
+              
+              export default Landing;
