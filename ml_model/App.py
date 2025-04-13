@@ -1,4 +1,5 @@
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Suppress TensorFlow oneDNN logs (optional)
 import cv2
 import pytesseract
 import numpy as np
@@ -21,18 +22,25 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins to prevent CORS issues
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for CORS
+
+# Base directory and model paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, "medicine_model.pkl")
-encoder_path = os.path.join(BASE_DIR, "label_encoders.pkl")
+le_path = os.path.join(BASE_DIR, "label_encoders.pkl")
 
-with open(model_path, "rb") as model_file:
-    model = pickle.load(model_file)
+# Load the trained model and label encoders
+try:
+    with open(model_path, "rb") as model_file:
+        model = pickle.load(model_file)
+    with open(le_path, "rb") as le_file:
+        label_encoders = pickle.load(le_file)
+except FileNotFoundError as e:
+    app.logger.error(f"Model or label encoder file not found: {e}")
+    raise
 
-with open(encoder_path, "rb") as encoder_file:
-    label_encoders = pickle.load(encoder_file)
 # Configure Google Generative AI API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
@@ -139,9 +147,7 @@ def save_json(file_path, data):
 
 # Drug alternatives functionality
 def extract_drug_names(text):
-    # Tokenize and clean
     words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
-    # Filter out common non-medical words
     blacklist = {"take", "tablet", "for", "days", "and", "if", "the", "a", "of", "to", "patient", "should", "is"}
     potential_drugs = [word for word in words if word not in blacklist and len(word) > 3]
     return list(set(potential_drugs))
