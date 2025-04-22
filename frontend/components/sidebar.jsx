@@ -13,6 +13,8 @@ const Sidebar = ({ isSidebarOpen, setSidebarOpen }) => {
     { icon: <Calendar size={20} />, label: "Reminders", path: "/reminders" },
     { icon: <User size={20} />, label: "Profile", path: "/profile" },
     { icon: <HelpCircle size={20} />, label: "Help", path: "/help" },
+    { icon: <FileText size={20} />, label: "Visualization", path: "/visualizations" }, // NEW ITEM
+
   ];
 
   // Logo component with SVG and advanced styling

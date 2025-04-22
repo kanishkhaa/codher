@@ -10,7 +10,7 @@ import Profile from "./pages/profile";
 import Help from "./pages/help";
 import AppointmentsPage from "./pages/appointments";
 import FloatingChatbot from "./pages/floatingchatbot"; // Import the chatbot
-
+import Visualizations from "./pages/visualization";
 const App = () => {
   return (
     <AppProvider>
@@ -26,6 +26,7 @@ const App = () => {
             <Route path="/profile" element={<Profile />} />
             <Route path="/help" element={<Help />} />
             <Route path="/appointments" element={<AppointmentsPage />} />
+            <Route path="/visualizations" element={<Visualizations />} />
           </Routes>
 
           {/* Floating Chatbot visible on all pages */}
@@ -35,5 +36,4 @@ const App = () => {
     </AppProvider>
   );
 };
-
 export default App;

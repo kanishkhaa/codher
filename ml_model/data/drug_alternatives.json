@@ -3,89 +3,338 @@
         "Xopenex"
     ],
     "Paracetamol": [
-        "Little Fevers",
-        "Bactimicina",
-        "Ofirmev",
-        "Pamprin Max Formula",
-        "Pamprin Multi-Symptom",
-        "Pamprin Cramp Formula",
-        "Percogesic Reformulated Jan 2011",
-        "Premsyn PMS",
-        "Panadol PM",
-        "Capacet",
-        "Nortemp",
-        "Acetadryl",
-        "Ringl",
-        "Pharbetol",
-        "Arthriten Inflammatory Pain",
-        "Backaid",
-        "Cetafen",
-        "Exaprin",
-        "Backaid IPF",
-        "Lortab",
-        "Primlev",
-        "Verdrocet",
-        "Excedrin Mild Headache",
-        "Excedrin PM Triple Action",
-        "Ninjacof A",
-        "Vanatol",
-        "Fioricet",
-        "Sed-Max",
-        "Panadol Extra",
-        "Arthriten Max",
-        "Apadaz",
-        "Panadol",
-        "Tylenol",
-        "Nalocet",
-        "Dvorah",
-        "Anacin AF",
-        "Bupap",
-        "Endocet",
-        "Esgic",
-        "Excedrin",
-        "Excedrin PM",
-        "Feverall",
-        "Fioricet with Codeine",
-        "Legatrin PM",
-        "Mapap",
-        "Marten-Tab",
-        "Norco",
-        "Redutemp",
-        "Repan",
-        "Saleto",
-        "Tempra Quicklets",
-        "Tencon",
-        "Tycolene",
-        "Tylenol PM",
-        "Tylenol with Codeine",
-        "Unisom with Pain Relief",
-        "Vanquish",
-        "Zebutal",
-        "Acephen",
-        "Vtol",
-        "Allzital",
-        "Prolate",
-        "Combogesic",
-        "Contragesic",
-        "Relagesic",
-        "Ultracet",
-        "Excedrin Tension Headache",
-        "Percocet",
-        "Lorcet",
-        "Frenadol",
-        "Dologesic",
-        "Hycet",
-        "Anabar",
-        "Ed Flex",
-        "By Ache",
-        "Excedrin Quick Tab",
-        "Comtrex Sore Throat Relief",
-        "Excedrin Back & Body",
-        "Anacin Advanced Headache Formula",
-        "Trezix",
-        "Tactinal",
-        "Zamicet",
-        "Backprin"
+        {
+            "name": "Little Fevers",
+            "similarity": 0.9
+        },
+        {
+            "name": "Bactimicina",
+            "similarity": 0.85
+        },
+        {
+            "name": "Ofirmev",
+            "similarity": 0.8
+        },
+        {
+            "name": "Pamprin Max Formula",
+            "similarity": 0.75
+        },
+        {
+            "name": "Pamprin Multi-Symptom",
+            "similarity": 0.7
+        },
+        {
+            "name": "Pamprin Cramp Formula",
+            "similarity": 0.65
+        },
+        {
+            "name": "Percogesic Reformulated Jan 2011",
+            "similarity": 0.6
+        },
+        {
+            "name": "Premsyn PMS",
+            "similarity": 0.55
+        },
+        {
+            "name": "Panadol PM",
+            "similarity": 0.5
+        },
+        {
+            "name": "Capacet",
+            "similarity": 0.45
+        },
+        {
+            "name": "Nortemp",
+            "similarity": 0.4
+        },
+        {
+            "name": "Acetadryl",
+            "similarity": 0.35
+        },
+        {
+            "name": "Ringl",
+            "similarity": 0.29999999999999993
+        },
+        {
+            "name": "Pharbetol",
+            "similarity": 0.25
+        },
+        {
+            "name": "Arthriten Inflammatory Pain",
+            "similarity": 0.19999999999999996
+        },
+        {
+            "name": "Backaid",
+            "similarity": 0.15000000000000002
+        },
+        {
+            "name": "Cetafen",
+            "similarity": 0.09999999999999998
+        },
+        {
+            "name": "Exaprin",
+            "similarity": 0.04999999999999993
+        },
+        {
+            "name": "Backaid IPF",
+            "similarity": 0.0
+        },
+        {
+            "name": "Lortab",
+            "similarity": -0.050000000000000044
+        },
+        {
+            "name": "Primlev",
+            "similarity": -0.09999999999999998
+        },
+        {
+            "name": "Verdrocet",
+            "similarity": -0.15000000000000002
+        },
+        {
+            "name": "Excedrin Mild Headache",
+            "similarity": -0.20000000000000007
+        },
+        {
+            "name": "Excedrin PM Triple Action",
+            "similarity": -0.2500000000000001
+        },
+        {
+            "name": "Ninjacof A",
+            "similarity": -0.30000000000000016
+        },
+        {
+            "name": "Vanatol",
+            "similarity": -0.35
+        },
+        {
+            "name": "Fioricet",
+            "similarity": -0.4
+        },
+        {
+            "name": "Sed-Max",
+            "similarity": -0.45000000000000007
+        },
+        {
+            "name": "Panadol Extra",
+            "similarity": -0.5000000000000001
+        },
+        {
+            "name": "Arthriten Max",
+            "similarity": -0.5500000000000002
+        },
+        {
+            "name": "Apadaz",
+            "similarity": -0.6
+        },
+        {
+            "name": "Panadol",
+            "similarity": -0.65
+        },
+        {
+            "name": "Tylenol",
+            "similarity": -0.7000000000000001
+        },
+        {
+            "name": "Nalocet",
+            "similarity": -0.7500000000000001
+        },
+        {
+            "name": "Dvorah",
+            "similarity": -0.8000000000000002
+        },
+        {
+            "name": "Anacin AF",
+            "similarity": -0.85
+        },
+        {
+            "name": "Bupap",
+            "similarity": -0.9
+        },
+        {
+            "name": "Endocet",
+            "similarity": -0.9500000000000001
+        },
+        {
+            "name": "Esgic",
+            "similarity": -1.0
+        },
+        {
+            "name": "Excedrin",
+            "similarity": -1.0500000000000003
+        },
+        {
+            "name": "Excedrin PM",
+            "similarity": -1.1
+        },
+        {
+            "name": "Feverall",
+            "similarity": -1.1500000000000004
+        },
+        {
+            "name": "Fioricet with Codeine",
+            "similarity": -1.2000000000000002
+        },
+        {
+            "name": "Legatrin PM",
+            "similarity": -1.25
+        },
+        {
+            "name": "Mapap",
+            "similarity": -1.3000000000000003
+        },
+        {
+            "name": "Marten-Tab",
+            "similarity": -1.35
+        },
+        {
+            "name": "Norco",
+            "similarity": -1.4000000000000004
+        },
+        {
+            "name": "Redutemp",
+            "similarity": -1.4500000000000002
+        },
+        {
+            "name": "Repan",
+            "similarity": -1.5000000000000004
+        },
+        {
+            "name": "Saleto",
+            "similarity": -1.5500000000000003
+        },
+        {
+            "name": "Tempra Quicklets",
+            "similarity": -1.6
+        },
+        {
+            "name": "Tencon",
+            "similarity": -1.6500000000000004
+        },
+        {
+            "name": "Tycolene",
+            "similarity": -1.7000000000000002
+        },
+        {
+            "name": "Tylenol PM",
+            "similarity": -1.7500000000000004
+        },
+        {
+            "name": "Tylenol with Codeine",
+            "similarity": -1.8000000000000003
+        },
+        {
+            "name": "Unisom with Pain Relief",
+            "similarity": -1.85
+        },
+        {
+            "name": "Vanquish",
+            "similarity": -1.9000000000000004
+        },
+        {
+            "name": "Zebutal",
+            "similarity": -1.9500000000000002
+        },
+        {
+            "name": "Acephen",
+            "similarity": -2.0000000000000004
+        },
+        {
+            "name": "Vtol",
+            "similarity": -2.0500000000000003
+        },
+        {
+            "name": "Allzital",
+            "similarity": -2.1
+        },
+        {
+            "name": "Prolate",
+            "similarity": -2.1500000000000004
+        },
+        {
+            "name": "Combogesic",
+            "similarity": -2.2
+        },
+        {
+            "name": "Contragesic",
+            "similarity": -2.2500000000000004
+        },
+        {
+            "name": "Relagesic",
+            "similarity": -2.3000000000000003
+        },
+        {
+            "name": "Ultracet",
+            "similarity": -2.35
+        },
+        {
+            "name": "Excedrin Tension Headache",
+            "similarity": -2.4000000000000004
+        },
+        {
+            "name": "Percocet",
+            "similarity": -2.45
+        },
+        {
+            "name": "Lorcet",
+            "similarity": -2.5000000000000004
+        },
+        {
+            "name": "Frenadol",
+            "similarity": -2.5500000000000003
+        },
+        {
+            "name": "Dologesic",
+            "similarity": -2.6
+        },
+        {
+            "name": "Hycet",
+            "similarity": -2.6500000000000004
+        },
+        {
+            "name": "Anabar",
+            "similarity": -2.7
+        },
+        {
+            "name": "Ed Flex",
+            "similarity": -2.7500000000000004
+        },
+        {
+            "name": "By Ache",
+            "similarity": -2.8000000000000003
+        },
+        {
+            "name": "Excedrin Quick Tab",
+            "similarity": -2.85
+        },
+        {
+            "name": "Comtrex Sore Throat Relief",
+            "similarity": -2.9000000000000004
+        },
+        {
+            "name": "Excedrin Back & Body",
+            "similarity": -2.95
+        },
+        {
+            "name": "Anacin Advanced Headache Formula",
+            "similarity": -3.0000000000000004
+        },
+        {
+            "name": "Trezix",
+            "similarity": -3.0500000000000003
+        },
+        {
+            "name": "Tactinal",
+            "similarity": -3.1
+        },
+        {
+            "name": "Zamicet",
+            "similarity": -3.15
+        },
+        {
+            "name": "Backprin",
+            "similarity": -3.2000000000000006
+        }
     ],
     "Aspirin": [
         "Ecpirin",

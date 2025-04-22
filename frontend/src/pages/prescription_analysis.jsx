@@ -1,11 +1,12 @@
-import React, { useState, useRef, useContext } from 'react';
+import React, { useState, useRef, useContext, useEffect } from 'react';
 import axios from 'axios';
 import { FileText, AlertTriangle, Upload, Clock, Sparkles, Stethoscope, AlertCircle, Trash2, Pill } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from '../../components/sidebar';
 import { AppContext } from "../context/AppContext";
 import { QRCodeSVG } from 'qrcode.react';
-
+import { DataSet, Network } from 'vis-network/standalone';
+import 'vis-network/styles/vis-network.css';
 const PrescriptionAnalyzer = () => {
   const {
     prescriptionHistory,
@@ -33,7 +34,95 @@ const PrescriptionAnalyzer = () => {
   const [drugAlternatives, setDrugAlternatives] = useState([]);
   const [isFetchingAlternatives, setIsFetchingAlternatives] = useState(false);
   const [showAlternativesModal, setShowAlternativesModal] = useState(false);
+  const [drugGraph, setDrugGraph] = useState({ nodes: [], edges: [] });
   const fileInputRef = useRef(null);
+  const graphRef = useRef(null);
+  const networkRef = useRef(null);
+
+  // Fetch drug graph on mount
+  useEffect(() => {
+    const fetchDrugGraph = async () => {
+      try {
+        const response = await axios.get('http://localhost:5000/get-drug-graph');
+        setDrugGraph(response.data);
+      } catch (error) {
+        console.error('Error fetching drug graph:', error);
+        setErrorMessage('Failed to load drug graph.');
+      }
+    };
+    fetchDrugGraph();
+  }, []);
+
+  // Render graph when alternatives modal is opened
+  useEffect(() => {
+    if (showAlternativesModal && graphRef.current && drugGraph.nodes.length > 0) {
+      const nodes = new DataSet(drugGraph.nodes.map(node => ({
+        ...node,
+        color: node.id.toLowerCase() === drugNameInput.toLowerCase() ? '#7e22ce' : '#3b82f6',
+        font: { color: '#ffffff', size: 14 },
+        size: node.id.toLowerCase() === drugNameInput.toLowerCase() ? 30 : 20
+      })));
+      const edges = new DataSet(drugGraph.edges.map(edge => ({
+        ...edge,
+        color: { color: '#9ca3af', highlight: '#f97316' },
+        width: edge.value * 5,
+        font: { color: '#ffffff', size: 12 }
+      })));
+
+      const data = { nodes, edges };
+      const options = {
+        physics: { stabilization: true },
+        layout: { hierarchical: false },
+        interaction: { zoomView: true, dragView: true },
+        nodes: { shape: 'dot', scaling: { min: 10, max: 30 } },
+        edges: { smooth: { type: 'continuous' } }
+      };
+
+      if (networkRef.current) {
+        networkRef.current.destroy();
+      }
+      networkRef.current = new Network(graphRef.current, data, options);
+
+      // Focus on input drug
+      const inputNodeId = drugGraph.nodes.find(node => node.id.toLowerCase() === drugNameInput.toLowerCase())?.id;
+      if (inputNodeId) {
+        networkRef.current.focus(inputNodeId, { scale: 1.0, animation: true });
+      }
+    }
+  }, [showAlternativesModal, drugGraph, drugNameInput]);
+
+  // BFS to find closest alternatives
+  const findClosestAlternatives = (startDrug) => {
+    const graph = {};
+    drugGraph.nodes.forEach(node => {
+      graph[node.id] = [];
+    });
+    drugGraph.edges.forEach(edge => {
+      graph[edge.from].push({ name: edge.to, similarity: edge.value });
+      graph[edge.to].push({ name: edge.from, similarity: edge.value });
+    });
+
+    const queue = [startDrug.toLowerCase()];
+    const visited = new Set();
+    const alternatives = [];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (visited.has(current)) continue;
+      visited.add(current);
+
+      const neighbors = graph[current] || [];
+      neighbors.sort((a, b) => b.similarity - a.similarity); // Prioritize higher similarity
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor.name)) {
+          alternatives.push({ name: neighbor.name, similarity: neighbor.similarity });
+          queue.push(neighbor.name);
+        }
+      }
+    }
+
+    return alternatives;
+  };
 
   // Fetch drug alternatives
   const fetchDrugAlternatives = async () => {
@@ -52,6 +141,10 @@ const PrescriptionAnalyzer = () => {
       if (response.data.error) throw new Error(response.data.error);
       const alternatives = response.data.alternatives[drugNameInput.trim()] || [];
       setDrugAlternatives(alternatives);
+
+      // Use BFS to get ordered alternatives
+      const bfsAlternatives = findClosestAlternatives(drugNameInput.trim());
+      setDrugAlternatives(bfsAlternatives);
       setShowAlternativesModal(true);
     } catch (error) {
       console.error('Error fetching drug alternatives:', error);
@@ -608,6 +701,37 @@ const PrescriptionAnalyzer = () => {
                 </button>
               </div>
             </div>
+
+            <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 mb-8 border border-gray-700/30 shadow-xl">
+              <div className="flex items-center mb-4">
+                <Pill className="w-6 h-6 text-purple-400 mr-2" />
+                <h3 className="text-lg font-semibold text-purple-400">Find Drug Alternatives</h3>
+              </div>
+              <div className="flex space-x-4">
+                <input
+                  type="text"
+                  placeholder="Enter drug name (e.g., Paracetamol)"
+                  value={drugNameInput}
+                  onChange={(e) => setDrugNameInput(e.target.value)}
+                  className="flex-1 bg-gray-700/50 text-white px-4 py-2 rounded-xl border border-gray-600/30 focus:ring-2 focus:ring-purple-500/50 transition-all"
+                />
+                <button
+                  onClick={fetchDrugAlternatives}
+                  disabled={isFetchingAlternatives}
+                  className={`bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-2 rounded-xl hover:scale-105 transition-transform flex items-center ${isFetchingAlternatives ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isFetchingAlternatives ? (
+                    <svg className="animate-spin h-5 w-5 mr-2 text-white" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8h8a8 8 0 01-16 0z" />
+                    </svg>
+                  ) : (
+                    <Sparkles className="w-5 h-5 mr-2" />
+                  )}
+                  Find Alternatives
+                </button>
+              </div>
+            </div>
           </div>
 
           {showQRModal && (
@@ -667,7 +791,7 @@ const PrescriptionAnalyzer = () => {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ duration: 0.3 }}
-                className="bg-gray-800/90 rounded-2xl p-6 max-w-lg w-full mx-4 border border-gray-700/30 shadow-2xl"
+                className="bg-gray-800/90 rounded-2xl p-6 max-w-3xl w-full mx-4 border border-gray-700/30 shadow-2xl"
               >
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
@@ -681,25 +805,24 @@ const PrescriptionAnalyzer = () => {
                   </button>
                 </div>
                 
-                {drugAlternatives.length > 0 ? (
+                {drugGraph.nodes.length > 0 && drugAlternatives.length > 0 ? (
                   <>
                     <div className="mb-4">
                       <div className="bg-purple-500/20 rounded-lg p-3 mb-4 border border-purple-500/30">
                         <div className="flex items-start">
                           <AlertCircle className="w-5 h-5 text-purple-400 mr-2 mt-0.5 flex-shrink-0" />
                           <p className="text-purple-200 text-sm">
-                            These medications may have similar effects but can vary in side effects, cost, and availability. Always consult your healthcare provider before switching medications.
+                            Nodes represent medications, with proximity to {drugNameInput} indicating higher similarity. Edges show similarity scores. Hover or click nodes to explore.
                           </p>
                         </div>
                       </div>
-                      
-                      <div className="flex justify-between items-center text-xs text-gray-400 px-3 mb-2">
-                        <span>Alternative Name</span>
-                        <span>Similarity</span>
-                      </div>
                     </div>
                     
-                    <div className="space-y-3 max-h-60 overflow-y-auto pr-1 custom-scrollbar mb-4">
+                    <div className="bg-gray-900/50 rounded-lg p-4 mb-4 border border-gray-700/30" style={{ height: '400px' }}>
+                      <div ref={graphRef} style={{ width: '100%', height: '100%' }} />
+                    </div>
+                    
+                    <div className="space-y-3 max-h-40 overflow-y-auto pr-1 custom-scrollbar mb-4">
                       {drugAlternatives.map((alt, index) => (
                         <motion.div
                           key={index}
@@ -713,8 +836,8 @@ const PrescriptionAnalyzer = () => {
                               <Pill className="w-5 h-5 text-purple-400" />
                             </div>
                             <div>
-                              <p className="text-gray-200 font-medium group-hover:text-white transition-colors">{alt}</p>
-                              <p className="text-gray-400 text-xs mt-1">Generic alternative</p>
+                              <p className="text-gray-200 font-medium group-hover:text-white transition-colors">{alt.name}</p>
+                              <p className="text-gray-400 text-xs mt-1">Similarity: {(alt.similarity * 100).toFixed(0)}%</p>
                             </div>
                           </div>
                           <div className="flex items-center">
@@ -722,7 +845,7 @@ const PrescriptionAnalyzer = () => {
                               {Array(5).fill(0).map((_, i) => (
                                 <div 
                                   key={i} 
-                                  className={`w-1.5 h-6 rounded-sm ${i < Math.floor(Math.random() * 2) + 3 ? 'bg-purple-500' : 'bg-gray-600'}`} 
+                                  className={`w-1.5 h-6 rounded-sm ${i < Math.round(alt.similarity * 5) ? 'bg-purple-500' : 'bg-gray-600'}`} 
                                 />
                               ))}
                             </div>
@@ -734,7 +857,7 @@ const PrescriptionAnalyzer = () => {
                     <div className="grid grid-cols-2 gap-4">
                       <button
                         onClick={() => {
-                          // Here you would add functionality to save or export alternatives
+                          // Placeholder for saving alternatives
                           setShowAlternativesModal(false);
                         }}
                         className="bg-gradient-to-r from-purple-600 to-pink-600 text-white py-3 px-4 rounded-xl hover:scale-105 transition-transform flex items-center justify-center"
@@ -908,209 +1031,157 @@ const PrescriptionAnalyzer = () => {
                                 </div>
                                 <div className="space-y-3">
                                   {med.interactions.map((interaction, idx) => (
-                                    <div key={idx} className="bg-gray-700/50 rounded-lg p-3 border border-gray-600/50">
-                                      <div className="flex items-center justify-between mb-1">
-                                        <div className="font-semibold">{interaction.drugName}</div>
-                                        <div className={`${getSeverityColor(interaction.severity)} text-sm font-medium`}>
-                                          {interaction.severity.charAt(0).toUpperCase() + interaction.severity.slice(1)} Risk
-                                        </div>
+                                    <div
+                                      key={idx}
+                                      className="bg-gray-700/50 rounded-lg p-3 flex items-center justify-between"
+                                    >
+                                      <div>
+                                        <p className="text-gray-200 font-medium">
+                                          {interaction.drugName}
+                                        </p>
+                                        <p className="text-gray-400 text-sm">
+                                          {interaction.effect}
+                                        </p>
                                       </div>
-                                      <p className="text-gray-300 text-sm">{interaction.effect}</p>
+                                      <span
+                                        className={`text-sm font-medium ${getSeverityColor(
+                                          interaction.severity
+                                        )}`}
+                                      >
+                                        {interaction.severity.toUpperCase()}
+                                      </span>
                                     </div>
                                   ))}
                                 </div>
                               </>
                             ) : (
-                              <div className="bg-green-500/20 rounded-lg p-4 text-green-300 flex items-center">
-                                <div className="w-8 h-8 bg-green-500/30 rounded-full flex items-center justify-center mr-3">
-                                  <span className="text-green-300">✓</span>
-                                </div>
-                                No known significant interactions detected.
-                              </div>
+                              <p className="text-gray-300">
+                                No known interactions for {med.name}.
+                              </p>
                             )}
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                </div>
-              )}
 
-              {processingStatus === 'Processing complete' && structuredText && (
-                <div className="mb-8 bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
-                  <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-4">
-                    Prescription Details
-                  </h2>
-                  <div className="text-gray-300 prose prose-invert max-w-none">
-                    {formatStructuredText(structuredText)}
-                  </div>
-                </div>
-              )}
+                  {structuredText && (
+                    <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
+                      <div className="flex items-center mb-6">
+                        <div className="p-4 rounded-full mr-6 bg-gradient-to-br from-blue-500 to-cyan-600">
+                          <Stethoscope className="w-7 h-7 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-1">
+                            Prescription Details
+                          </h3>
+                          <p className="text-gray-400 text-sm tracking-wide">
+                            Structured prescription information
+                          </p>
+                        </div>
+                      </div>
+                      <div className="prose prose-invert max-w-none">
+                        {formatStructuredText(structuredText)}
+                      </div>
+                    </div>
+                  )}
 
-              <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl mb-8">
-                <div className="flex items-center mb-4">
-                  <Clock className="w-6 h-6 mr-3 text-blue-400" />
-                  <h2 className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500">Prescription History</h2>
-                </div>
-                {Array.isArray(prescriptionHistory) && prescriptionHistory.length > 0 ? (
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-gray-700">
-                        <th className="text-left py-3 px-4 text-gray-400 font-medium">Name</th>
-                        <th className="text-left py-3 px-4 text-gray-400 font-medium">Date</th>
-                        <th className="text-left py-3 px-4 text-gray-400 font-medium">Doctor</th>
-                        <th className="text-left py-3 px-4 text-gray-400 font-medium">Status</th>
-                        <th className="text-left py-3 px-4 text-gray-400 font-medium">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {prescriptionHistory.map((prescription) => (
-                        <tr
-                          key={prescription.id}
-                          className="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer"
-                          onClick={() => handlePrescriptionClick(prescription)}
-                        >
-                          <td className="py-3 px-4 text-gray-300">{prescription.name}</td>
-                          <td className="py-3 px-4 text-gray-300">{prescription.date}</td>
-                          <td className="py-3 px-4 text-gray-300">{prescription.doctor}</td>
-                          <td className="py-3 px-4">
-                            <span className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm">
-                              {prescription.status}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <button
-                              onClick={(event) => handleDeletePrescription(prescription.id, event)}
-                              className="p-1 text-red-400 hover:text-red-300 transition-colors"
-                              title="Delete prescription"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <div className="text-center py-8 text-gray-400">
-                    No prescription history available. Upload a prescription to get started.
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="w-80 flex-shrink-0 overflow-y-auto pl-6">
-              <div className="sticky top-0 pt-8">
-                <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl mb-6">
-                  <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-4">
-                    Action Center
-                  </h3>
-                  <input
-                    type="text"
-                    value={drugNameInput}
-                    onChange={(e) => setDrugNameInput(e.target.value)}
-                    placeholder="Enter drug name"
-                    className="w-full bg-gray-800/60 backdrop-blur-lg text-white px-4 py-2 rounded-xl mb-3 border border-gray-700/30 focus:ring-2 focus:ring-purple-500/50 transition-all"
-                  />
-                  <button
-                    onClick={fetchDrugAlternatives}
-                    disabled={isFetchingAlternatives}
-                    className={`w-full bg-gradient-to-r from-purple-600 to-pink-600 ${
-                      isFetchingAlternatives ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
-                    } text-white py-3 px-4 rounded-xl mb-3 transition-all flex items-center justify-center`}
-                  >
-                    {isFetchingAlternatives ? (
-                      <>
-                        <div className="animate-spin mr-2 h-5 w-5 border-2 border-white border-opacity-20 border-t-white rounded-full"></div>
-                        Finding Alternatives...
-                      </>
-                    ) : (
-                      <>
-                        <Pill className="w-5 h-5 mr-2" />
-                        Find Drug Alternatives
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={generateAiSummary}
-                    disabled={!structuredText || isSummarizing}
-                    className={`w-full bg-gradient-to-r from-blue-600 to-purple-600 ${
-                      !structuredText || isSummarizing ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
-                    } text-white py-3 px-4 rounded-xl mb-3 transition-all flex items-center justify-center`}
-                  >
-                    {isSummarizing ? (
-                      <>
-                        <div className="animate-spin mr-2 h-5 w-5 border-2 border-white border-opacity-20 border-t-white rounded-full"></div>
-                        Generating Summary...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-5 h-5 mr-2" />
-                        Generate AI Summary
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={generateWellnessTips}
-                    disabled={!structuredText || isGeneratingTips}
-                    className={`w-full bg-gradient-to-r from-green-600 to-teal-600 ${
-                      !structuredText || isGeneratingTips ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
-                    } text-white py-3 px-4 rounded-xl mb-3 transition-all flex items-center justify-center`}
-                  >
-                    {isGeneratingTips ? (
-                      <>
-                        <div className="animate-spin mr-2 h-5 w-5 border-2 border-white border-opacity-20 border-t-white rounded-full"></div>
-                        Generating Tips...
-                      </>
-                    ) : (
-                      <>
-                        <Stethoscope className="w-5 h-5 mr-2" />
-                        Get Wellness Tips
-                      </>
-                    )}
-                  </button>
                   {aiSummary && (
-                    <div className="mt-4 pt-4 border-t border-gray-700/50">
-                      <div className="flex items-center mb-3">
-                        <Sparkles className="w-5 h-5 text-blue-400 mr-2" />
-                        <h4 className="text-md font-semibold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500">AI Summary</h4>
+                    <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
+                      <div className="flex items-center mb-6">
+                        <div className="p-4 rounded-full mr-6 bg-gradient-to-br from-purple-500 to-pink-600">
+                          <Sparkles className="w-7 h-7 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-1">
+                            AI-Generated Summary
+                          </h3>
+                          <p className="text-gray-400 text-sm tracking-wide">
+                            Key insights from your prescription
+                          </p>
+                        </div>
                       </div>
-                      <div className="prose prose-invert prose-sm max-w-none text-xs">
-                        {formatAiText(aiSummary)}
-                      </div>
+                      <div>{formatAiText(aiSummary)}</div>
                     </div>
                   )}
+
                   {wellnessTips && (
-                    <div className="mt-4 pt-4 border-t border-gray-700/50">
-                      <div className="flex items-center mb-3">
-                        <Stethoscope className="w-5 h-5 text-green-400 mr-2" />
-                        <h4 className="text-md font-semibold text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-500">Wellness Tips</h4>
+                    <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
+                      <div className="flex items-center mb-6">
+                        <div className="p-4 rounded-full mr-6 bg-gradient-to-br from-green-500 to-teal-600">
+                          <Clock className="w-7 h-7 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-1">
+                            Wellness Tips
+                          </h3>
+                          <p className="text-gray-400 text-sm tracking-wide">
+                            Personalized health recommendations
+                          </p>
+                        </div>
                       </div>
-                      <div className="prose prose-invert prose-sm max-w-none text-xs">
-                        {formatAiText(wellnessTips)}
-                      </div>
+                      <div>{formatAiText(wellnessTips)}</div>
                     </div>
                   )}
                 </div>
-                {currentMedications.length > 0 && (
-                  <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
-                    <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-4">
-                      Medications
-                    </h3>
-                    <ul className="space-y-2">
-                      {currentMedications.map((med) => (
-                        <li key={`mini-${med.id}`} className="flex items-center py-2 border-b border-gray-700/30 last:border-b-0">
-                          <span className="flex items-center justify-center w-6 h-6 bg-blue-500/20 text-blue-300 rounded-full mr-3 text-xs">
-                            {med.id}
-                          </span>
-                          <div className="flex-1">
-                            <div className="text-gray-300 font-medium">{med.name}</div>
-                            <div className="text-gray-500 text-sm">{med.dosage}</div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
+              )}
+
+              <div className="bg-gray-800/60 backdrop-blur-xl rounded-2xl p-6 border border-gray-700/30 shadow-xl">
+                <div className="flex items-center mb-6">
+                  <div className="p-4 rounded-full mr-6 bg-gradient-to-br from-blue-500 to-cyan-600">
+                    <FileText className="w-7 h-7 text-white" />
                   </div>
-                )}
+                  <div>
+                    <h3 className="text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500 mb-1">
+                      Prescription History
+                    </h3>
+                    <p className="text-gray-400 text-sm tracking-wide">
+                      Your past prescriptions
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  {prescriptionHistory.length > 0 ? (
+                    prescriptionHistory.map((prescription) => (
+                      <div
+                        key={prescription.id}
+                        onClick={() => handlePrescriptionClick(prescription)}
+                        className="bg-gray-700/50 hover:bg-gray-700/70 rounded-lg p-4 flex items-center justify-between group transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center">
+                          <div className="p-2 bg-blue-500/20 rounded-full mr-3">
+                            <FileText className="w-5 h-5 text-blue-400" />
+                          </div>
+                          <div>
+                            <p className="text-gray-200 font-medium group-hover:text-white transition-colors">
+                              {prescription.name}
+                            </p>
+                            <p className="text-gray-400 text-xs mt-1">
+                              {prescription.date} | {prescription.doctor}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-gray-400 text-xs">
+                            {prescription.status}
+                          </span>
+                          <button
+                            onClick={(e) =>
+                              handleDeletePrescription(prescription.id, e)
+                            }
+                            className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 p-2 rounded-full hover:bg-red-500/20 transition-all"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-400 text-center">
+                      No prescription history available.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </div>

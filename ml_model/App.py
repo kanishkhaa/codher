@@ -1,5 +1,4 @@
 import os
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Suppress TensorFlow oneDNN logs (optional)
 import cv2
 import pytesseract
 import numpy as np
@@ -24,9 +23,7 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for CORS
-
-# Base directory and model paths
+CORS(app, resources={r"/*": {"origins": "*"}})
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(BASE_DIR, "medicine_model.pkl")
 le_path = os.path.join(BASE_DIR, "label_encoders.pkl")
@@ -68,6 +65,65 @@ PRESCRIPTIONS_FILE = os.path.join(DATA_FOLDER, 'prescriptions.json')
 MEDICATIONS_FILE = os.path.join(DATA_FOLDER, 'medications.json')
 REMINDERS_FILE = os.path.join(DATA_FOLDER, 'reminders.json')
 ALTERNATIVES_FILE = os.path.join(DATA_FOLDER, 'drug_alternatives.json')
+MEDICATION_CACHE_FILE = os.path.join(DATA_FOLDER, 'medication_cache.json')
+
+# Simulated drug similarity graph
+DRUG_GRAPH = {
+    "paracetamol": [
+        {"name": "acetaminophen", "similarity": 0.95},
+        {"name": "ibuprofen", "similarity": 0.70},
+        {"name": "naproxen", "similarity": 0.65}
+    ],
+    "acetaminophen": [
+        {"name": "paracetamol", "similarity": 0.95},
+        {"name": "ibuprofen", "similarity": 0.68},
+        {"name": "aspirin", "similarity": 0.60}
+    ],
+    "ibuprofen": [
+        {"name": "paracetamol", "similarity": 0.70},
+        {"name": "acetaminophen", "similarity": 0.68},
+        {"name": "naproxen", "similarity": 0.85},
+        {"name": "aspirin", "similarity": 0.75}
+    ],
+    "naproxen": [
+        {"name": "ibuprofen", "similarity": 0.85},
+        {"name": "paracetamol", "similarity": 0.65},
+        {"name": "aspirin", "similarity": 0.70}
+    ],
+    "aspirin": [
+        {"name": "ibuprofen", "similarity": 0.75},
+        {"name": "acetaminophen", "similarity": 0.60},
+        {"name": "naproxen", "similarity": 0.70}
+    ]
+}
+
+# Load medication cache
+MEDICATION_CACHE = {}
+
+def load_json(file_path, default=[]):
+    try:
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        return default
+    except Exception as e:
+        app.logger.error(f"Error loading JSON from {file_path}: {e}")
+        return default
+
+def save_json(file_path, data):
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+        # Update cache if medications are updated
+        if file_path == MEDICATIONS_FILE:
+            global MEDICATION_CACHE
+            MEDICATION_CACHE = build_medication_cache(data)
+            save_json(MEDICATION_CACHE_FILE, MEDICATION_CACHE)
+    except Exception as e:
+        app.logger.error(f"Error saving JSON to {file_path}: {e}")
+
+# Load cache on startup
+MEDICATION_CACHE = load_json(MEDICATION_CACHE_FILE, {})
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -128,22 +184,40 @@ def organize_text_with_ai(text):
         app.logger.error(f"Error organizing text with AI: {e}")
         return {"structured_text": "Error processing text", "generic_predictions": {}}
 
-def load_json(file_path, default=[]):
-    try:
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                return json.load(f)
-        return default
-    except Exception as e:
-        app.logger.error(f"Error loading JSON from {file_path}: {e}")
-        return default
-
-def save_json(file_path, data):
-    try:
-        with open(file_path, 'w') as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        app.logger.error(f"Error saving JSON to {file_path}: {e}")
+def build_medication_cache(medications):
+    """
+    Build a medication metadata cache from the medications list.
+    Returns a dict with medication name (lowercase) as key and metadata as value.
+    """
+    cache = {}
+    for med in medications:
+        med_name = med.get('name', '').lower()
+        description = med.get('description', 'Unknown').lower()
+        
+        # Derive medication type based on description
+        if not description or description == 'unknown':
+            med_type = 'Others'
+        elif 'antibiotic' in description:
+            med_type = 'Antibiotics'
+        elif 'pain' in description or 'nsaid' in description:
+            med_type = 'Painkillers'
+        elif any(keyword in description for keyword in ['cardio', 'blood pressure', 'heart', 'ace inhibitor']):
+            med_type = 'Cardiovascular'
+        elif any(keyword in description for keyword in ['neuro', 'brain']):
+            med_type = 'Neurological'
+        elif any(keyword in description for keyword in ['hormon', 'diabetes', 'biguanide']):
+            med_type = 'Hormonal'
+        elif any(keyword in description for keyword in ['cholesterol', 'statin']):
+            med_type = 'Cholesterol'
+        else:
+            med_type = 'Others'
+        
+        cache[med_name] = {
+            'name': med.get('name', 'Unknown'),
+            'description': med.get('description', 'Unknown'),
+            'type': med_type
+        }
+    return cache
 
 # Drug alternatives functionality
 def extract_drug_names(text):
@@ -177,7 +251,7 @@ def get_brand_names(rxcui):
             for group in concept_group:
                 concepts = group.get("conceptProperties", [])
                 for concept in concepts:
-                    brands.append(concept["name"])
+                    brands.append({"name": concept["name"], "similarity": 0.9 - len(brands) * 0.05})
             return brands
     except Exception as e:
         app.logger.error(f"Error getting brand names for RxCUI {rxcui}: {e}")
@@ -199,6 +273,185 @@ def fetch_alternatives(drug_names):
             app.logger.warning(f"No brand names found for '{drug}'")
     return result
 
+@app.route('/dashboard', methods=['GET'])
+def get_dashboard_data():
+    """
+    Compute and return dashboard data, including the medication cache.
+    """
+    try:
+        # Load data
+        medications = load_json(MEDICATIONS_FILE)
+        reminders = load_json(REMINDERS_FILE)
+        
+        # Build or update the medication cache
+        global MEDICATION_CACHE
+        MEDICATION_CACHE = build_medication_cache(medications)
+        save_json(MEDICATION_CACHE_FILE, MEDICATION_CACHE)
+        
+        # Compute dashboard data
+        today = pd.Timestamp.now().strftime('%Y-%m-%d')
+        one_week_ago = (pd.Timestamp.now() - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+        
+        # Today's medications
+        todays_medications = [
+            {
+                'id': r['id'],
+                'name': r['medication'],
+                'time': r['time'],
+                'taken': r['completed'],
+                'type': MEDICATION_CACHE.get(r['medication'].lower(), {}).get('type', 'Unknown')
+            }
+            for r in reminders
+            if r['date'] == today and 'take' in r['title'].lower()
+        ]
+        
+        # Missed doses (within the last week)
+        missed_doses = [
+            {
+                'id': r['id'],
+                'name': r['medication'],
+                'date': pd.Timestamp(r['date']).strftime('%b %d'),
+                'time': r['time'],
+                'type': MEDICATION_CACHE.get(r['medication'].lower(), {}).get('type', 'Unknown')
+            }
+            for r in reminders
+            if (r['date'] >= one_week_ago and
+                r['date'] <= today and
+                not r['completed'] and
+                isinstance(r['title'], str) and
+                ('take' in r['title'].lower() or 'dose' in r['title'].lower()))
+        ]
+        
+        # Upcoming refills
+        upcoming_refills = [
+            {
+                'name': r['medication'],
+                'date': pd.Timestamp(r['date']).strftime('%b %d')
+            }
+            for r in reminders
+            if r['recurring'] == 'none' and 'refill' in r['title'].lower()
+        ]
+        upcoming_refills.sort(key=lambda x: x['date'])
+        next_refill_date = upcoming_refills[0]['date'] if upcoming_refills else 'N/A'
+        
+        # Medication types
+        type_counts = defaultdict(int)
+        for med in MEDICATION_CACHE.values():
+            type_counts[med['type']] += 1
+        
+        total_types = sum(type_counts.values())
+        medication_types = [
+            {
+                'name': name,
+                'percentage': (count / total_types * 100) if total_types else 0,
+                'count': count,
+                'color': (
+                    '#FF6B6B' if name == 'Painkillers' else
+                    '#4ECDC4' if name == 'Antibiotics' else
+                    '#FF9F1C' if name == 'Hormonal' else
+                    '#8675A9' if name == 'Cardiovascular' else
+                    '#5D93E1' if name == 'Neurological' else
+                    '#45B7D1' if name == 'Cholesterol' else
+                    '#D3D3D3'
+                ),
+                'emoji': (
+                    '🩹' if name == 'Painkillers' else
+                    '💊' if name == 'Antibiotics' else
+                    '🧬' if name == 'Hormonal' else
+                    '❤️' if name == 'Cardiovascular' else
+                    '🧠' if name == 'Neurological' else
+                    '📉' if name == 'Cholesterol' else
+                    '🏥'
+                )
+            }
+            for name, count in type_counts.items()
+        ]
+        
+        # Other metrics
+        total_medications = len(medications)
+        missed_doses_week = len(missed_doses)
+        monthly_health_score = min(100, max(0, 100 - missed_doses_week * 5))
+        
+        # Return dashboard data and cache
+        return jsonify({
+            'totalMedications': total_medications,
+            'nextRefillDate': next_refill_date,
+            'missedDosesWeek': missed_doses_week,
+            'monthlyHealthScore': monthly_health_score,
+            'medicationTypes': medication_types,
+            'todaysMedications': todays_medications,
+            'missedDoses': missed_doses,
+            'upcomingRefills': upcoming_refills,
+            'medicationCache': MEDICATION_CACHE
+        })
+    except Exception as e:
+        app.logger.error(f"Error fetching dashboard data: {str(e)}")
+        return jsonify({"error": f"Failed to fetch dashboard data: {str(e)}"}), 500
+
+@app.route('/clear-cache', methods=['POST'])
+def clear_cache():
+    """
+    Clear the medication cache.
+    """
+    try:
+        global MEDICATION_CACHE
+        MEDICATION_CACHE = {}
+        save_json(MEDICATION_CACHE_FILE, {})
+        return jsonify({"status": "success", "message": "Medication cache cleared"})
+    except Exception as e:
+        app.logger.error(f"Error clearing cache: {str(e)}")
+        return jsonify({"error": f"Failed to clear cache: {str(e)}"}), 500
+
+@app.route('/get-drug-graph', methods=['GET'])
+def get_drug_graph():
+    try:
+        nodes = [{"id": drug, "label": drug.capitalize()} for drug in DRUG_GRAPH.keys()]
+        edges = []
+        seen = set()
+        for source, targets in DRUG_GRAPH.items():
+            for target in targets:
+                edge_id = tuple(sorted([source, target["name"]]))
+                if edge_id not in seen:
+                    edges.append({
+                        "from": source,
+                        "to": target["name"],
+                        "value": target["similarity"],
+                        "label": f"{target['similarity']:.2f}"
+                    })
+                    seen.add(edge_id)
+        return jsonify({"nodes": nodes, "edges": edges})
+    except Exception as e:
+        app.logger.error(f"Error fetching drug graph: {str(e)}")
+        return jsonify({"error": f"Failed to fetch drug graph: {str(e)}"}), 500
+
+@app.route('/find-alternatives', methods=['POST'])
+def find_alternatives():
+    try:
+        data = request.get_json()
+        if not data or 'drugs' not in data:
+            return jsonify({"error": "Drug names are required"}), 400
+
+        if isinstance(data['drugs'], list) and data['drugs']:
+            drug_names = data['drugs']
+        elif 'prescription_text' in data and data['prescription_text']:
+            drug_names = extract_drug_names(data['prescription_text'])
+        else:
+            return jsonify({"error": "No valid drug names or prescription text provided"}), 400
+
+        if not drug_names:
+            return jsonify({"error": "No valid drug names found"}), 400
+
+        alternatives = fetch_alternatives(drug_names)
+        
+        alternatives_data = load_json(ALTERNATIVES_FILE, {})
+        alternatives_data.update(alternatives)
+        save_json(ALTERNATIVES_FILE, alternatives_data)
+        
+        return jsonify({"alternatives": alternatives})
+    except Exception as e:
+        app.logger.error(f"Error finding alternatives: {str(e)}")
+        return jsonify({"error": f"Failed to find alternatives: {str(e)}"}), 500
+
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -214,13 +467,9 @@ def upload_file():
         file.save(filepath)
         extracted_text = extract_text(filepath)
         structured_data = organize_text_with_ai(extracted_text)
-
-        # Load existing data
         prescriptions = load_json(PRESCRIPTIONS_FILE)
         medications = load_json(MEDICATIONS_FILE)
         reminders = load_json(REMINDERS_FILE)
-
-        # Update prescriptions
         new_prescription = {
             "id": len(prescriptions) + 1,
             "filename": filename,
@@ -230,8 +479,6 @@ def upload_file():
         }
         prescriptions.append(new_prescription)
         save_json(PRESCRIPTIONS_FILE, prescriptions)
-
-        # Update medications
         for med_name, generic_name in structured_data["generic_predictions"].items():
             if not any(m['name'] == med_name for m in medications):
                 medications.append({
@@ -242,8 +489,6 @@ def upload_file():
                     "sideEffects": "Consult doctor"
                 })
         save_json(MEDICATIONS_FILE, medications)
-
-        # Update reminders
         today = pd.Timestamp.now().strftime('%Y-%m-%d')
         refill_date = (pd.Timestamp.now() + pd.Timedelta(days=30)).strftime('%Y-%m-%d')
         for i, (med_name, _) in enumerate(structured_data["generic_predictions"].items()):
@@ -266,16 +511,11 @@ def upload_file():
                 "completed": False
             })
         save_json(REMINDERS_FILE, reminders)
-
-        # Find alternatives for medications
         drug_names = list(structured_data["generic_predictions"].keys())
         alternatives = fetch_alternatives(drug_names)
-        
-        # Save alternatives
         alternatives_data = load_json(ALTERNATIVES_FILE, {})
         alternatives_data.update(alternatives)
         save_json(ALTERNATIVES_FILE, alternatives_data)
-
         return jsonify({
             "filename": filename,
             "extracted_text": extracted_text,
@@ -331,38 +571,27 @@ def generate_prescription_doc():
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
-
         patient = data.get('patient', {})
         medications = data.get('medications', [])
         prescriptions = data.get('prescriptions', [])
         timestamp = data.get('timestamp', pd.Timestamp.now().strftime('%Y-%m-%d'))
-
-        # Generate PDF
         file_name = f"prescription_{patient.get('n', 'Unknown').replace(' ', '')}{timestamp}.pdf"
         file_path = os.path.join(app.config['DOCS_FOLDER'], file_name)
         doc = SimpleDocTemplate(file_path, pagesize=letter)
         styles = getSampleStyleSheet()
         story = []
-
-        # Title
         story.append(Paragraph("Emergency Medical Information", styles['Title']))
         story.append(Spacer(1, 12))
-
-        # Patient Info
         story.append(Paragraph(f"PATIENT: {patient.get('n', 'Unknown')}", styles['Normal']))
         if patient.get('g', 'U') != 'U':
             story.append(Paragraph(f"GENDER: {patient.get('g')}", styles['Normal']))
         if patient.get('e', 'None') != 'None':
             story.append(Paragraph(f"EMERGENCY CONTACT: {patient.get('e')}", styles['Normal']))
         story.append(Spacer(1, 12))
-
-        # Medications
         story.append(Paragraph("MEDICATIONS:", styles['Heading2']))
         for i, med in enumerate(medications, 1):
             story.append(Paragraph(f"{i}. {med.get('n', 'Unknown')}: {med.get('d', 'N/A')} ({med.get('date', 'N/A')})", styles['Normal']))
         story.append(Spacer(1, 12))
-
-        # Prescription Details
         story.append(Paragraph("PRESCRIPTION DETAILS:", styles['Heading2']))
         for i, p in enumerate(prescriptions, 1):
             doctor = p.get('doctor', 'Unknown')
@@ -371,10 +600,7 @@ def generate_prescription_doc():
             story.append(Paragraph(clean_text, styles['Normal']))
             story.append(Spacer(1, 6))
         story.append(Spacer(1, 12))
-
-        # Footer
         story.append(Paragraph(f"Generated: {timestamp}", styles['Normal']))
-
         doc.build(story)
         url = f"http://localhost:5000/docs/{file_name}"
         return jsonify({"url": url})
@@ -448,7 +674,6 @@ def get_pharmacies():
         if not GEOAPIFY_API_KEY:
             app.logger.error("Geoapify API key not set")
             return jsonify({"error": "Geoapify API key missing"}), 500
-
         response = requests.get("https://api.geoapify.com/v2/places", params={
             "categories": "healthcare.pharmacy",
             "filter": f"circle:{lon},{lat},50000",
@@ -456,16 +681,13 @@ def get_pharmacies():
             "limit": 10,
             "apiKey": GEOAPIFY_API_KEY
         })
-        
         response.raise_for_status()
         data = response.json()
-        
         pharmacies = [{
             "id": pharmacy["properties"].get("place_id", f"pharm-{secrets.token_hex(4)}"),
             "name": pharmacy["properties"].get("name", "Unnamed Pharmacy"),
             "address": pharmacy["properties"].get("formatted", "Address not available")
         } for pharmacy in data.get("features", [])]
-        
         return jsonify(pharmacies)
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Error fetching pharmacies: {str(e)}")
@@ -477,56 +699,19 @@ def chat_gemini():
         data = request.get_json()
         if not data or 'chat' not in data:
             return jsonify({"error": "Message is required"}), 400
-
         message = data['chat']
         history = data.get('history', [])
-
         model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content(message)
-
         bot_response = response.text.strip() if response.text else "No response from AI."
-
         updated_history = history + [
             {"role": "user", "parts": [{"text": message}]},
             {"role": "model", "parts": [{"text": bot_response}]}
         ]
-
         return jsonify({"text": bot_response, "history": updated_history})
     except Exception as e:
         app.logger.error(f"Error in chat-gemini: {str(e)}")
         return jsonify({"error": f"Failed to process chat request: {str(e)}"}), 500
-
-@app.route('/find-alternatives', methods=['POST'])
-def find_alternatives():
-    try:
-        data = request.get_json()
-        if not data or 'drugs' not in data:
-            return jsonify({"error": "Drug names are required"}), 400
-
-        # Option 1: Use specific drug names provided in the request
-        if isinstance(data['drugs'], list) and data['drugs']:
-            drug_names = data['drugs']
-        # Option 2: Extract from prescription text
-        elif 'prescription_text' in data and data['prescription_text']:
-            drug_names = extract_drug_names(data['prescription_text'])
-        else:
-            return jsonify({"error": "No valid drug names or prescription text provided"}), 400
-
-        if not drug_names:
-            return jsonify({"error": "No valid drug names found"}), 400
-
-        # Find alternatives
-        alternatives = fetch_alternatives(drug_names)
-        
-        # Save to file
-        alternatives_data = load_json(ALTERNATIVES_FILE, {})
-        alternatives_data.update(alternatives)
-        save_json(ALTERNATIVES_FILE, alternatives_data)
-        
-        return jsonify({"alternatives": alternatives})
-    except Exception as e:
-        app.logger.error(f"Error finding alternatives: {str(e)}")
-        return jsonify({"error": f"Failed to find alternatives: {str(e)}"}), 500
 
 @app.route('/get-all-alternatives', methods=['GET'])
 def get_all_alternatives():
@@ -551,4 +736,4 @@ def get_drug_alternatives(drug_name):
         return jsonify({"error": f"Failed to fetch alternatives: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)

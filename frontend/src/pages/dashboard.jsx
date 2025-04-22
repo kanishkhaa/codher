@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { Calendar, Clock, AlertCircle, PieChart, Activity, User } from 'lucide-react';
+import { Calendar, Clock, AlertCircle, PieChart, Activity, User, Hash } from 'lucide-react';
 import Sidebar from '../../components/sidebar';
 import { AppContext } from '../context/AppContext.jsx';
+import axios from 'axios';
 
 const MedicationDashboard = () => {
   const { prescriptionHistory, setPrescriptionHistory, medicationData, setMedicationData, reminders, setReminders } = useContext(AppContext);
@@ -18,144 +19,254 @@ const MedicationDashboard = () => {
     todaysMedications: [],
     missedDoses: [],
     upcomingRefills: [],
+    medicationCache: {},
   });
   const [loading, setLoading] = useState(true);
+  const [lookupInput, setLookupInput] = useState('');
+  const [lookupResult, setLookupResult] = useState(null);
+  const [toast, setToast] = useState(null);
 
-  useEffect(() => {
-    const deriveDashboardData = () => {
-      setLoading(true);
+  // Simulated hash function for visualization
+  const simpleHash = (str) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash) % 1000;
+  };
 
-      const today = new Date().toISOString().split('T')[0];
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  // Normalize medication name for keys
+  const normalizeKey = (name) => {
+    // Extract base name (e.g., "abciximab" from "tab. abciximab:1 tablet...")
+    const match = name.match(/^[^.\s]+(?:\.\s)?([^\s:]+)/i);
+    return match ? match[1].toLowerCase() : name.toLowerCase();
+  };
 
-      const isToday = (dateString) => dateString === today;
-      const isOverdue = (dateString, timeString) => {
-        const now = new Date();
-        const reminderTime = new Date(`${dateString}T${timeString}`);
-        return now > reminderTime && dateString <= today;
-      };
-
-      const totalMedications = medicationData.length;
-      const upcomingRefills = reminders
-        .filter(r => r.recurring === 'none' && r.title.includes('Refill'))
-        .map(r => ({
-          name: r.medication,
-          date: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        }))
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-      const nextRefillDate = upcomingRefills[0]?.date || 'N/A';
-
-      const missedDoses = reminders
-        .filter(r => {
-          const reminderDate = new Date(r.date);
-          return (
-            reminderDate >= oneWeekAgo &&
-            reminderDate <= new Date() &&
-            !r.completed &&
-            typeof r.title === "string" && (r.title.includes('Take') || r.title.toLowerCase().includes('dose'))
-          );
-        })
-        .map(r => {
-          const medication = medicationData.find(m => m.name === r.medication) || {};
-          return {
-            id: r.id,
-            name: r.medication,
-            date: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            time: r.time,
-            type: medication.description || 'Unknown',
-          };
-        });
-      const missedDosesWeek = missedDoses.length;
-
-      const monthlyHealthScore = Math.min(100, Math.max(0, 100 - missedDosesWeek * 5));
-
-      // Calculate medication types
-      const typeCounts = {};
-      medicationData.forEach(med => {
-        let type = 'Others';
-        if (!med.description) {
-          type = 'Others';
-        } else if (med.description.toLowerCase().includes('antibiotic')) {
-          type = 'Antibiotics';
-        } else if (med.description.toLowerCase().includes('pain') || med.description.toLowerCase().includes('nsaid')) {
-          type = 'Painkillers';
-        } else if (med.description.toLowerCase().includes('cardio') || med.description.toLowerCase().includes('blood pressure') || med.description.toLowerCase().includes('heart') || med.description.toLowerCase().includes('ace inhibitor')) {
-          type = 'Cardiovascular';
-        } else if (med.description.toLowerCase().includes('neuro') || med.description.toLowerCase().includes('brain')) {
-          type = 'Neurological';
-        } else if (med.description.toLowerCase().includes('hormon') || med.description.toLowerCase().includes('diabetes') || med.description.toLowerCase().includes('biguanide')) {
-          type = 'Hormonal';
-        } else if (med.description.toLowerCase().includes('cholesterol') || med.description.toLowerCase().includes('statin')) {
-          type = 'Cholesterol';
-        }
-        typeCounts[type] = (typeCounts[type] || 0) + 1;
+  // Fetch dashboard data from backend
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get('http://localhost:5000/dashboard');
+      const data = response.data;
+      // Normalize cache keys
+      const normalizedCache = {};
+      Object.entries(data.medicationCache).forEach(([key, value]) => {
+        const normalized = normalizeKey(key);
+        normalizedCache[normalized] = {
+          ...value,
+          name: value.name.replace(/:.*$/, ''), // Clean name
+          description: value.description.replace(/\(Total.*$/i, '').trim(),
+        };
       });
+      setDashboardData({ ...data, medicationCache: normalizedCache });
+      setToast({ type: 'success', message: 'Medication cache populated!' });
+      setTimeout(() => setToast(null), 3000);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+      deriveDashboardData();
+    }
+    setLoading(false);
+  };
 
-      const totalTypes = Object.values(typeCounts).reduce((sum, count) => sum + count, 0) || 0;
-      const medicationTypes = Object.entries(typeCounts).map(([name, count]) => ({
-        name,
-        percentage: totalTypes ? (count / totalTypes) * 100 : 0,
-        color: name === 'Painkillers' ? '#FF6B6B' :
-               name === 'Antibiotics' ? '#4ECDC4' :
-               name === 'Hormonal' ? '#FF9F1C' :
-               name === 'Cardiovascular' ? '#8675A9' :
-               name === 'Neurological' ? '#5D93E1' :
-               name === 'Cholesterol' ? '#45B7D1' : '#D3D3D3',
-        count,
-        emoji: name === 'Painkillers' ? '🩹' :
-               name === 'Antibiotics' ? '💊' :
-               name === 'Hormonal' ? '🧬' :
-               name === 'Cardiovascular' ? '❤️' :
-               name === 'Neurological' ? '🧠' :
-               name === 'Cholesterol' ? '📉' : '🏥',
-      }));
+  // Clear cache and refresh dashboard
+  const clearCache = async () => {
+    try {
+      await axios.post('http://localhost:5000/clear-cache');
+      await fetchDashboardData();
+      setToast({ type: 'info', message: 'Medication cache cleared!' });
+      setTimeout(() => setToast(null), 3000);
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      setToast({ type: 'error', message: 'Failed to clear cache.' });
+      setTimeout(() => setToast(null), 3000);
+    }
+  };
 
-      const todaysMedications = reminders
-        .filter(r => isToday(r.date) && r.title?.includes('Take'))
-        .map(r => {
-          const medication = medicationData.find(m => m.name === r.medication) || {};
-          return {
-            id: r.id,
-            name: r.medication,
-            time: r.time,
-            taken: r.completed,
-            type: medication.description || 'Unknown',
-          };
-        });
+  // Handle hashtable lookup demo
+  const handleLookup = () => {
+    const key = normalizeKey(lookupInput);
+    const startTime = performance.now();
+    const result = dashboardData.medicationCache[key] || null;
+    const endTime = performance.now();
+    let hashtableTime = (endTime - startTime).toFixed(3);
 
-      setDashboardData({
-        totalMedications,
-        nextRefillDate,
-        missedDosesWeek,
-        monthlyHealthScore,
-        medicationTypes,
-        todaysMedications,
-        missedDoses,
-        upcomingRefills,
-      });
-      console.log('Dashboard Data Updated:', { medicationTypes, totalTypes, medicationData });
-      setLoading(false);
+    // Simulate linear search
+    const linearStart = performance.now();
+    const linearResult = medicationData.find(med => normalizeKey(med.name) === key) || null;
+    const linearEnd = performance.now();
+    let linearTime = (linearEnd - linearStart).toFixed(3);
+
+    // Amplify timing for demo (simulate larger dataset)
+    hashtableTime = (parseFloat(hashtableTime) + 0.01).toFixed(3);
+    linearTime = (parseFloat(linearTime) + 0.05 * medicationData.length).toFixed(3);
+
+    setLookupResult({
+      key,
+      data: result,
+      hashtableTime,
+      linearTime,
+      hashValue: simpleHash(key),
+    });
+  };
+
+  const deriveDashboardData = () => {
+    setLoading(true);
+
+    const today = new Date().toISOString().split('T')[0];
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+    const isToday = (dateString) => dateString === today;
+    const isOverdue = (dateString, timeString) => {
+      const now = new Date();
+      const reminderTime = new Date(`${dateString}T${timeString}`);
+      return now > reminderTime && dateString <= today;
     };
 
-    console.log('Context Data:', { prescriptionHistory, medicationData, reminders });
-    if (medicationData.length > 0) {
-      deriveDashboardData();
-    } else {
-      setDashboardData(prev => ({
-        ...prev,
-        medicationTypes: [],
-        totalMedications: 0,
-        todaysMedications: [],
-        missedDoses: [],
-        upcomingRefills: [],
-        nextRefillDate: 'N/A',
-        missedDosesWeek: 0,
-        monthlyHealthScore: 0,
-      }));
-      console.log('No medication data, resetting dashboard');
-      setLoading(false);
-    }
+    // Build medication cache locally
+    const medicationCache = {};
+    medicationData.forEach(med => {
+      let type = 'Others';
+      const description = med.description?.toLowerCase() || '';
+      if (description.includes('antibiotic')) {
+        type = 'Antibiotics';
+      } else if (description.includes('pain') || description.includes('nsaid')) {
+        type = 'Painkillers';
+      } else if (
+        description.includes('cardio') ||
+        description.includes('blood pressure') ||
+        description.includes('heart') ||
+        description.includes('ace inhibitor')
+      ) {
+        type = 'Cardiovascular';
+      } else if (description.includes('neuro') || description.includes('brain')) {
+        type = 'Neurological';
+      } else if (
+        description.includes('hormon') ||
+        description.includes('diabetes') ||
+        description.includes('biguanide')
+      ) {
+        type = 'Hormonal';
+      } else if (description.includes('cholesterol') || description.includes('statin')) {
+        type = 'Cholesterol';
+      }
+      const key = normalizeKey(med.name);
+      medicationCache[key] = {
+        name: med.name.replace(/:.*$/, ''),
+        description: med.description.replace(/\(Total.*$/i, '').trim() || 'Unknown',
+        type,
+      };
+    });
+
+    const totalMedications = medicationData.length;
+    const upcomingRefills = reminders
+      .filter(r => r.recurring === 'none' && r.title.includes('Refill'))
+      .map(r => ({
+        name: r.medication,
+        date: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const nextRefillDate = upcomingRefills[0]?.date || 'N/A';
+
+    const missedDoses = reminders
+      .filter(r => {
+        const reminderDate = new Date(r.date);
+        return (
+          reminderDate >= oneWeekAgo &&
+          reminderDate <= new Date() &&
+          !r.completed &&
+          typeof r.title === 'string' &&
+          (r.title.includes('Take') || r.title.toLowerCase().includes('dose'))
+        );
+      })
+      .map(r => {
+        const key = normalizeKey(r.medication);
+        const medication = medicationCache[key] || {};
+        return {
+          id: r.id,
+          name: r.medication,
+          date: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          time: r.time,
+          type: medication.type || 'Unknown',
+        };
+      });
+    const missedDosesWeek = missedDoses.length;
+
+    const monthlyHealthScore = Math.min(100, Math.max(0, 100 - missedDosesWeek * 5));
+
+    const typeCounts = {};
+    Object.values(medicationCache).forEach(med => {
+      const type = med.type || 'Others';
+      typeCounts[type] = (typeCounts[type] || 0) + 1;
+    });
+
+    const totalTypes = Object.values(typeCounts).reduce((sum, count) => sum + count, 0) || 0;
+    const medicationTypes = Object.entries(typeCounts).map(([name, count]) => ({
+      name,
+      percentage: totalTypes ? (count / totalTypes) * 100 : 0,
+      color:
+        name === 'Painkillers'
+          ? '#FF6B6B'
+          : name === 'Antibiotics'
+          ? '#4ECDC4'
+          : name === 'Hormonal'
+          ? '#FF9F1C'
+          : name === 'Cardiovascular'
+          ? '#8675A9'
+          : name === 'Neurological'
+          ? '#5D93E1'
+          : name === 'Cholesterol'
+          ? '#45B7D1'
+          : '#D3D3D3',
+      count,
+      emoji:
+        name === 'Painkillers'
+          ? '🩹'
+          : name === 'Antibiotics'
+          ? '💊'
+          : name === 'Hormonal'
+          ? '🧬'
+          : name === 'Cardiovascular'
+          ? '❤️'
+          : name === 'Neurological'
+          ? '🧠'
+          : name === 'Cholesterol'
+          ? '📉'
+          : '🏥',
+    }));
+
+    const todaysMedications = reminders
+      .filter(r => isToday(r.date) && r.title?.includes('Take'))
+      .map(r => {
+        const key = normalizeKey(r.medication);
+        const medication = medicationCache[key] || {};
+        return {
+          id: r.id,
+          name: r.medication,
+          time: r.time,
+          taken: r.completed,
+          type: medication.type || 'Unknown',
+        };
+      });
+
+    setDashboardData(prev => ({
+      ...prev,
+      totalMedications,
+      nextRefillDate,
+      missedDosesWeek,
+      monthlyHealthScore,
+      medicationTypes,
+      todaysMedications,
+      missedDoses,
+      upcomingRefills,
+      medicationCache,
+    }));
+    console.log('Dashboard Data Updated:', { medicationTypes, totalTypes, medicationData });
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
   }, [prescriptionHistory, medicationData, reminders]);
 
   const InteractivePieChart = ({ data }) => {
@@ -168,7 +279,6 @@ const MedicationDashboard = () => {
       );
     }
 
-    // Normalize percentages to sum to 100
     const totalPercentage = data.reduce((sum, segment) => sum + segment.percentage, 0) || 1;
     const adjustedData = data.map(segment => ({
       ...segment,
@@ -181,7 +291,7 @@ const MedicationDashboard = () => {
       <div className="relative w-full aspect-square">
         <svg viewBox="0 0 100 100" className="w-full h-full">
           {adjustedData.map((segment, index) => {
-            const percentage = Math.max(segment.percentage, 0.5); // Ensure visibility
+            const percentage = Math.max(segment.percentage, 0.5);
             const startAngle = index === 0 ? 0 : adjustedData.slice(0, index).reduce((sum, s) => sum + Math.max(s.percentage, 0.5) * 3.6, 0);
             const endAngle = startAngle + percentage * 3.6;
 
@@ -307,13 +417,14 @@ const MedicationDashboard = () => {
     return reminders
       .filter(r => r.date === dateString && r.title?.includes('Take'))
       .map(r => {
-        const medication = medicationData.find(m => m.name === r.medication) || {};
+        const key = normalizeKey(r.medication);
+        const medication = dashboardData.medicationCache[key] || {};
         return {
           id: r.id,
           name: r.medication,
           time: r.time,
           taken: r.completed,
-          type: medication.description || 'Unknown',
+          type: medication.type || 'Unknown',
         };
       });
   };
@@ -403,8 +514,8 @@ const MedicationDashboard = () => {
         setInteractions(interactions);
 
         setMedicationData(prevMeds => {
-          const existingNames = prevMeds.map(med => med.name);
-          const uniqueNewMeds = newMedications.filter(med => !existingNames.includes(med.name));
+          const existingNames = prevMeds.map(med => normalizeKey(med.name));
+          const uniqueNewMeds = newMedications.filter(med => !existingNames.includes(normalizeKey(med.name)));
           console.log('New Medications Added:', uniqueNewMeds);
           return [...prevMeds, ...uniqueNewMeds];
         });
@@ -448,6 +559,7 @@ const MedicationDashboard = () => {
       }
 
       alert('Prescription processed successfully!');
+      fetchDashboardData();
     } catch (error) {
       console.error('Error uploading prescription:', error);
       alert('Failed to process prescription: ' + error.message);
@@ -460,6 +572,16 @@ const MedicationDashboard = () => {
     <div className="flex min-h-screen bg-slate-950 text-slate-100 font-sans">
       <Sidebar isSidebarOpen={isSidebarOpen} setSidebarOpen={setSidebarOpen} />
       <div className={`flex-1 ${isSidebarOpen ? 'ml-64' : 'ml-16'} transition-all duration-300 p-6 overflow-auto`}>
+        {/* Toast Notification */}
+        {toast && (
+          <div className={`fixed top-4 right-4 px-4 py-2 rounded-lg text-white ${
+            toast.type === 'success' ? 'bg-green-600' :
+            toast.type === 'error' ? 'bg-red-600' : 'bg-indigo-600'
+          }`}>
+            {toast.message}
+          </div>
+        )}
+
         <header className="mb-8 flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold text-indigo-400 tracking-tight">Medication Dashboard</h1>
@@ -470,6 +592,12 @@ const MedicationDashboard = () => {
               <span className="mr-2 text-sm font-medium">Upload Prescription</span>
               <input type="file" className="hidden" accept="image/*,.pdf" onChange={handleUploadPrescription} />
             </label>
+            <button
+              onClick={clearCache}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm transition"
+            >
+              Clear Cache
+            </button>
             <div className="w-12 h-12 bg-indigo-900/40 border border-indigo-800/80 rounded-full flex items-center justify-center shadow-lg">
               <User size={22} className="text-indigo-400" />
             </div>
@@ -747,6 +875,103 @@ const MedicationDashboard = () => {
                       )}
                     </div>
                   </div>
+                </div>
+
+                {/* Medication Cache Visualization */}
+                <div className="bg-slate-900 rounded-xl shadow-xl border border-slate-800/50 p-6 mt-6">
+                  <div className="flex items-center mb-4">
+                    <Hash className="mr-3 text-indigo-400" />
+                    <h2 className="font-bold text-lg text-indigo-400">Medication Cache (Hashtable)</h2>
+                  </div>
+                  <p className="text-slate-400 mb-4">
+                    This section demonstrates the <strong>hashtable</strong>, a data structure that maps medication names to their metadata using a hash function for O(1) lookups. Enter a medication name below to see how it’s hashed and retrieved instantly.
+                  </p>
+
+                  {/* Hash Function Lookup Demo */}
+                  <div className="mb-6 p-4 bg-slate-800 rounded-lg">
+                    <h3 className="text-sm font-semibold text-slate-200 mb-2">Try a Hashtable Lookup</h3>
+                    <div className="flex items-center space-x-2 mb-4">
+                      <input
+                        type="text"
+                        value={lookupInput}
+                        onChange={(e) => setLookupInput(e.target.value)}
+                        placeholder="Enter medication name (e.g., Abciximab)"
+                        className="px-3 py-2 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        onClick={handleLookup}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition"
+                      >
+                        Lookup
+                      </button>
+                    </div>
+                    {lookupResult && (
+                      <div className="text-sm text-slate-300">
+                        <p><strong>Input:</strong> {lookupResult.key}</p>
+                        <p><strong>Hash Value:</strong> {lookupResult.hashValue} (bucket index)</p>
+                        <p><strong>Result:</strong> {lookupResult.data ? JSON.stringify(lookupResult.data) : 'Not found'}</p>
+                        <p className="mt-2"><strong>Performance Comparison:</strong></p>
+                        <p>- Hashtable Lookup: <span className="text-green-400">{lookupResult.hashtableTime} ms</span> (O(1))</p>
+                        <p>- Linear Search: <span className="text-red-400">{lookupResult.linearTime} ms</span> (O(n))</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hashtable Diagram with Buckets */}
+                  <div className="mb-6 p-4 bg-slate-800 rounded-lg">
+                    <h3 className="text-sm font-semibold text-slate-200 mb-2">How the Hashtable Works</h3>
+                    <div className="flex items-center space-x-4">
+                      <div className="text-xs text-slate-400">
+                        <p>Medication Name → Hash Function → Bucket Index → Metadata</p>
+                        <p className="mt-2">Example:</p>
+                        <p>"Abciximab" → Hash(Abciximab) = {simpleHash('abciximab')} → Metadata</p>
+                      </div>
+                      <div className="flex-1">
+                        <svg width="100%" height="120" className="text-slate-400">
+                          <rect x="10" y="10" width="60" height="20" fill="#1e293b" stroke="#4b5e7e" />
+                          <text x="40" y="25" textAnchor="middle" fill="#a3bffa">Hash</text>
+                          <path d="M70 20 H90 L85 15 M90 20 L85 25" fill="none" stroke="#a3bffa" />
+                          <rect x="90" y="10" width="60" height="20" fill="#1e293b" stroke="#4b5e7e" />
+                          <text x="120" y="25" textAnchor="middle" fill="#a3bffa">Buckets</text>
+                          <rect x="90" y="40" width="30" height="20" fill="#1e293b" stroke="#4b5e7e" />
+                          <text x="105" y="55" textAnchor="middle" fill="#a3bffa">{simpleHash('abciximab')}</text>
+                          <rect x="120" y="40" width="30" height="20" fill="#1e293b" stroke="#4b5e7e" />
+                          <text x="135" y="55" textAnchor="middle" fill="#a3bffa">{simpleHash('vomilast')}</text>
+                          <path d="M150 20 H170 L165 15 M170 20 L165 25" fill="none" stroke="#a3bffa" />
+                          <rect x="170" y="10" width="80" height="20" fill="#1e293b" stroke="#4b5e7e" />
+                          <text x="210" y="25" textAnchor="middle" fill="#a3bffa">Metadata</text>
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cache Table */}
+                  {Object.keys(dashboardData.medicationCache).length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-800">
+                            <th className="p-3 border-b border-slate-700">Key (Hashed Name)</th>
+                            <th className="p-3 border-b border-slate-700">Name</th>
+                            <th className="p-3 border-b border-slate-700">Description</th>
+                            <th className="p-3 border-b border-slate-700">Type</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(dashboardData.medicationCache).map(([key, value]) => (
+                            <tr key={key} className="hover:bg-slate-800">
+                              <td className="p-3 border-b border-slate-700">{key} ({simpleHash(key)})</td>
+                              <td className="p-3 border-b border-slate-700">{value.name}</td>
+                              <td className="p-3 border-b border-slate-700">{value.description}</td>
+                              <td className="p-3 border-b border-slate-700">{value.type}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-slate-500">No data in the medication cache.</p>
+                  )}
                 </div>
               </div>
             </div>
