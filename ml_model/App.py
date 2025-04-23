@@ -752,5 +752,24 @@ def serve_doc(filename):
         app.logger.error(f"Error serving document {filename}: {e}")
         return jsonify({"error": "Document not found"}), 404
 
+@app.route('/profile', methods=['GET'])
+def profile():
+    try:
+        return jsonify({"message": "Profile data"})
+    except Exception as e:
+        app.logger.error(f"Error fetching profile: {e}")
+        return jsonify({"error": "Failed to fetch profile"}), 500
+
+@app.route('/reminders/<int:id>', methods=['DELETE'])
+def delete_reminder(id):
+    try:
+        reminders = load_json(REMINDERS_FILE)
+        reminders = [r for r in reminders if r['id'] != id]
+        save_json(REMINDERS_FILE, reminders)
+        return jsonify({"status": "success", "message": f"Reminder {id} deleted"})
+    except Exception as e:
+        app.logger.error(f"Error deleting reminder {id}: {e}")
+        return jsonify({"error": "Failed to delete reminder"}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
