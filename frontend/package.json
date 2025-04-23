@@ -30,9 +30,12 @@
     "react-leaflet": "^5.0.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.4.0",
+    "react-vis-network": "^1.0.0",
+    "react-vis-network-graph": "^3.0.1",
     "recharts": "^2.15.1",
     "tailwindcss": "^4.0.16",
     "tesseract.js": "^6.0.0",
+    "vis-data": "^7.1.9",
     "vis-network": "^9.1.9",
     "yup": "^1.6.1"
   },

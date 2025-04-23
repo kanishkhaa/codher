@@ -17,6 +17,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from dotenv import load_dotenv
+from math import sin, cos, sqrt, atan2, radians
 
 # Load environment variables
 load_dotenv()
@@ -114,7 +115,6 @@ def save_json(file_path, data):
     try:
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=4)
-        # Update cache if medications are updated
         if file_path == MEDICATIONS_FILE:
             global MEDICATION_CACHE
             MEDICATION_CACHE = build_medication_cache(data)
@@ -171,13 +171,11 @@ def organize_text_with_ai(text):
         """
         response = model.generate_content(prompt)
         structured_text = response.text.strip() if response.text else "No response from AI."
-        
         extracted_medicines = []
         for line in structured_text.split('\n'):
             if "Medicine Name" in line:
                 med_name = line.split("Medicine Name:")[-1].split(",")[0].strip()
                 extracted_medicines.append(med_name)
-        
         generic_predictions = {med: predict_generic_name(med) for med in extracted_medicines}
         return {"structured_text": structured_text, "generic_predictions": generic_predictions}
     except Exception as e:
@@ -185,16 +183,10 @@ def organize_text_with_ai(text):
         return {"structured_text": "Error processing text", "generic_predictions": {}}
 
 def build_medication_cache(medications):
-    """
-    Build a medication metadata cache from the medications list.
-    Returns a dict with medication name (lowercase) as key and metadata as value.
-    """
     cache = {}
     for med in medications:
         med_name = med.get('name', '').lower()
         description = med.get('description', 'Unknown').lower()
-        
-        # Derive medication type based on description
         if not description or description == 'unknown':
             med_type = 'Others'
         elif 'antibiotic' in description:
@@ -211,7 +203,6 @@ def build_medication_cache(medications):
             med_type = 'Cholesterol'
         else:
             med_type = 'Others'
-        
         cache[med_name] = {
             'name': med.get('name', 'Unknown'),
             'description': med.get('description', 'Unknown'),
@@ -219,7 +210,6 @@ def build_medication_cache(medications):
         }
     return cache
 
-# Drug alternatives functionality
 def extract_drug_names(text):
     words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
     blacklist = {"take", "tablet", "for", "days", "and", "if", "the", "a", "of", "to", "patient", "should", "is"}
@@ -240,7 +230,6 @@ def get_rxcui(drug_name):
 def get_brand_names(rxcui):
     if not rxcui:
         return []
-    
     url = f"https://rxnav.nlm.nih.gov/REST/rxcui/{rxcui}/related.json?tty=BN"
     try:
         response = requests.get(url)
@@ -273,26 +262,86 @@ def fetch_alternatives(drug_names):
             app.logger.warning(f"No brand names found for '{drug}'")
     return result
 
+# MultiGraph class implementation
+class MultiGraph:
+    def __init__(self):
+        self.vertices = {}  # Store vertices (user location, hospitals)
+        self.edges = {}  # Store edges as adjacency list
+
+    def add_vertex(self, id, data):
+        if id not in self.vertices:
+            self.vertices[id] = data
+            self.edges[id] = []
+
+    def add_edge(self, from_id, to_id, attributes):
+        if from_id in self.vertices and to_id in self.vertices:
+            # Ensure all required attributes are present
+            required_attrs = {'distance': 'N/A', 'time': 'N/A', 'mode': 'unknown'}
+            attributes = {**required_attrs, **attributes}
+            self.edges[from_id].append({'to': to_id, **attributes})
+            self.edges[to_id].append({'to': from_id, **attributes})  # Undirected
+
+    def get_edges(self, vertex):
+        return self.edges.get(vertex, [])
+
+    def find_best_hospital(self, user_id, criteria='distance'):
+        edges = self.get_edges(user_id)
+        if not edges:
+            return None
+        return min(edges, key=lambda edge: edge.get(criteria, float('inf')) if isinstance(edge.get(criteria), (int, float)) else float('inf'), default=None)
+
+    def get_paths_to_hospital(self, user_id, hospital_id):
+        return [edge for edge in self.get_edges(user_id) if edge['to'] == hospital_id]
+
+    def get_graph_data(self):
+        nodes = [
+            {
+                'id': id,
+                'name': data.get('name', id),
+                'color': '#4ECDC4' if id == 'user' else '#FF6B6B',
+                'size': 600 if id == 'user' else 400
+            }
+            for id, data in self.vertices.items()
+        ]
+        links = []
+        seen = set()
+        for from_id, edge_list in self.edges.items():
+            for edge in edge_list:
+                edge_id = f"{from_id}-{edge['to']}-{edge.get('mode', 'unknown')}"
+                if edge_id not in seen:
+                    links.append({
+                        'source': from_id,
+                        'target': edge['to'],
+                        'color': (
+                            '#45B7D1' if edge.get('mode') == 'driving' else
+                            '#FF9F1C' if edge.get('mode') == 'walking' else
+                            '#8675A9'
+                        ),
+                        'label': edge.get('mode', 'unknown'),
+                        'distance': edge.get('distance', 'N/A'),
+                        'time': edge.get('time', 'N/A')
+                    })
+                    seen.add(edge_id)
+        return {'nodes': nodes, 'links': links}
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371  # Earth's radius in km
+    dLat = radians(lat2 - lat1)
+    dLon = radians(lon2 - lon1)
+    a = sin(dLat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dLon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
+
 @app.route('/dashboard', methods=['GET'])
 def get_dashboard_data():
-    """
-    Compute and return dashboard data, including the medication cache.
-    """
     try:
-        # Load data
         medications = load_json(MEDICATIONS_FILE)
         reminders = load_json(REMINDERS_FILE)
-        
-        # Build or update the medication cache
         global MEDICATION_CACHE
         MEDICATION_CACHE = build_medication_cache(medications)
         save_json(MEDICATION_CACHE_FILE, MEDICATION_CACHE)
-        
-        # Compute dashboard data
         today = pd.Timestamp.now().strftime('%Y-%m-%d')
         one_week_ago = (pd.Timestamp.now() - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
-        
-        # Today's medications
         todays_medications = [
             {
                 'id': r['id'],
@@ -304,8 +353,6 @@ def get_dashboard_data():
             for r in reminders
             if r['date'] == today and 'take' in r['title'].lower()
         ]
-        
-        # Missed doses (within the last week)
         missed_doses = [
             {
                 'id': r['id'],
@@ -321,8 +368,6 @@ def get_dashboard_data():
                 isinstance(r['title'], str) and
                 ('take' in r['title'].lower() or 'dose' in r['title'].lower()))
         ]
-        
-        # Upcoming refills
         upcoming_refills = [
             {
                 'name': r['medication'],
@@ -333,12 +378,9 @@ def get_dashboard_data():
         ]
         upcoming_refills.sort(key=lambda x: x['date'])
         next_refill_date = upcoming_refills[0]['date'] if upcoming_refills else 'N/A'
-        
-        # Medication types
         type_counts = defaultdict(int)
         for med in MEDICATION_CACHE.values():
             type_counts[med['type']] += 1
-        
         total_types = sum(type_counts.values())
         medication_types = [
             {
@@ -366,13 +408,9 @@ def get_dashboard_data():
             }
             for name, count in type_counts.items()
         ]
-        
-        # Other metrics
         total_medications = len(medications)
         missed_doses_week = len(missed_doses)
         monthly_health_score = min(100, max(0, 100 - missed_doses_week * 5))
-        
-        # Return dashboard data and cache
         return jsonify({
             'totalMedications': total_medications,
             'nextRefillDate': next_refill_date,
@@ -390,9 +428,6 @@ def get_dashboard_data():
 
 @app.route('/clear-cache', methods=['POST'])
 def clear_cache():
-    """
-    Clear the medication cache.
-    """
     try:
         global MEDICATION_CACHE
         MEDICATION_CACHE = {}
@@ -424,29 +459,110 @@ def get_drug_graph():
         app.logger.error(f"Error fetching drug graph: {str(e)}")
         return jsonify({"error": f"Failed to fetch drug graph: {str(e)}"}), 500
 
+@app.route('/get-hospital-graph', methods=['GET'])
+def get_hospital_graph():
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+    if not lat or not lon:
+        app.logger.error("Missing latitude or longitude parameters")
+        return jsonify({"error": "Latitude and Longitude are required"}), 400
+    try:
+        lat, lon = float(lat), float(lon)
+        app.logger.info(f"Processing hospital graph for coordinates: lat={lat}, lon={lon}")
+        GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY")
+        if not GEOAPIFY_API_KEY:
+            app.logger.error("Geoapify API key not set")
+            return jsonify({"error": "Geoapify API key missing"}), 500
+        response = requests.get("https://api.geoapify.com/v2/places", params={
+            "categories": "healthcare.hospital",
+            "filter": f"circle:{lon},{lat},50000",
+            "bias": f"proximity:{lon},{lat}",
+            "limit": 10,
+            "apiKey": GEOAPIFY_API_KEY
+        })
+        response.raise_for_status()
+        data = response.json()
+        app.logger.info(f"Geoapify response: {len(data.get('features', []))} hospitals found")
+        hospitals = [
+            {
+                "id": hospital["properties"].get("place_id", f"hosp-{secrets.token_hex(4)}"),
+                "name": hospital["properties"].get("name", "Unnamed Hospital"),
+                "address": hospital["properties"].get("formatted", "Address not available"),
+                "lat": hospital["geometry"]["coordinates"][1],
+                "lon": hospital["geometry"]["coordinates"][0]
+            }
+            for hospital in data.get("features", [])
+        ]
+        if not hospitals:
+            app.logger.warning("No hospitals found in Geoapify response")
+            return jsonify({
+                "graph": {"nodes": [], "links": []},
+                "hospitals": [],
+                "best_hospital": None
+            })
+        graph = MultiGraph()
+        graph.add_vertex('user', {'lat': lat, 'lng': lon, 'name': 'Your Location'})
+        for hospital in hospitals:
+            graph.add_vertex(hospital['id'], hospital)
+            distance = calculate_distance(lat, lon, hospital['lat'], hospital['lon'])
+            hospital['distance'] = round(distance, 1)
+            hospital['time_driving'] = round(distance * 3)  # 3 minutes per km
+            hospital['time_walking'] = round(distance * 12)  # 12 minutes per km
+            # Add driving edge
+            graph.add_edge('user', hospital['id'], {
+                'distance': hospital['distance'],
+                'time': hospital['time_driving'],
+                'mode': 'driving'
+            })
+            # Add walking edge
+            graph.add_edge('user', hospital['id'], {
+                'distance': round(distance * 1.2, 1),  # Slightly longer for walking
+                'time': hospital['time_walking'],
+                'mode': 'walking'
+            })
+        graph_data = graph.get_graph_data()
+        best_hospital_edge = graph.find_best_hospital('user', 'distance')
+        best_hospital = None
+        if best_hospital_edge:
+            best_hospital_id = best_hospital_edge['to']
+            best_hospital = next((h for h in hospitals if h['id'] == best_hospital_id), None)
+            if best_hospital:
+                best_hospital['distance'] = best_hospital_edge['distance']
+                best_hospital['time'] = best_hospital_edge['time']
+                best_hospital['mode'] = best_hospital_edge['mode']
+        app.logger.info(f"Graph generated: {len(graph_data['nodes'])} nodes, {len(graph_data['links'])} links")
+        app.logger.debug(f"Hospitals: {json.dumps(hospitals, indent=2)}")
+        app.logger.debug(f"Graph data: {json.dumps(graph_data, indent=2)}")
+        return jsonify({
+            'graph': graph_data,
+            'hospitals': hospitals,
+            'best_hospital': best_hospital
+        })
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Geoapify API error: {str(e)}")
+        return jsonify({"error": f"Failed to fetch hospital data: {str(e)}"}), 500
+    except Exception as e:
+        app.logger.error(f"Error processing hospital graph: {str(e)}")
+        return jsonify({"error": f"Failed to process hospital graph: {str(e)}"}), 500
+
 @app.route('/find-alternatives', methods=['POST'])
 def find_alternatives():
     try:
         data = request.get_json()
         if not data or 'drugs' not in data:
             return jsonify({"error": "Drug names are required"}), 400
-
         if isinstance(data['drugs'], list) and data['drugs']:
             drug_names = data['drugs']
         elif 'prescription_text' in data and data['prescription_text']:
             drug_names = extract_drug_names(data['prescription_text'])
         else:
             return jsonify({"error": "No valid drug names or prescription text provided"}), 400
-
         if not drug_names:
             return jsonify({"error": "No valid drug names found"}), 400
-
         alternatives = fetch_alternatives(drug_names)
-        
         alternatives_data = load_json(ALTERNATIVES_FILE, {})
         alternatives_data.update(alternatives)
         save_json(ALTERNATIVES_FILE, alternatives_data)
-        
         return jsonify({"alternatives": alternatives})
     except Exception as e:
         app.logger.error(f"Error finding alternatives: {str(e)}")
@@ -456,11 +572,9 @@ def find_alternatives():
 def upload_file():
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
-    
     file = request.files['file']
     if file.filename == '' or not allowed_file(file.filename):
         return jsonify({"error": "Invalid file"}), 400
-    
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     try:
@@ -565,6 +679,24 @@ def complete_reminder(id):
         app.logger.error(f"Error completing reminder {id}: {e}")
         return jsonify({"error": "Failed to complete reminder"}), 500
 
+@app.route('/prescriptions/<int:id>', methods=['DELETE'])
+def delete_prescription(id):
+    try:
+        prescriptions = load_json(PRESCRIPTIONS_FILE)
+        prescription = next((p for p in prescriptions if p['id'] == id), None)
+        if not prescription:
+            return jsonify({"error": "Prescription not found"}), 404
+        prescriptions = [p for p in prescriptions if p['id'] != id]
+        save_json(PRESCRIPTIONS_FILE, prescriptions)
+        # Remove associated file if it exists
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], prescription['filename'])
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        return jsonify({"status": "success", "message": f"Prescription {id} deleted"})
+    except Exception as e:
+        app.logger.error(f"Error deleting prescription {id}: {e}")
+        return jsonify({"error": f"Failed to delete prescription: {str(e)}"}), 500
+
 @app.route('/generate-prescription-doc', methods=['POST'])
 def generate_prescription_doc():
     try:
@@ -575,7 +707,7 @@ def generate_prescription_doc():
         medications = data.get('medications', [])
         prescriptions = data.get('prescriptions', [])
         timestamp = data.get('timestamp', pd.Timestamp.now().strftime('%Y-%m-%d'))
-        file_name = f"prescription_{patient.get('n', 'Unknown').replace(' ', '')}{timestamp}.pdf"
+        file_name = f"prescription_{patient.get('n', 'Unknown').replace(' ', '')}_{timestamp}.pdf"
         file_path = os.path.join(app.config['DOCS_FOLDER'], file_name)
         doc = SimpleDocTemplate(file_path, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -620,120 +752,5 @@ def serve_doc(filename):
         app.logger.error(f"Error serving document {filename}: {e}")
         return jsonify({"error": "Document not found"}), 404
 
-@app.route('/prescriptions/<int:id>', methods=['DELETE'])
-def delete_prescription(id):
-    try:
-        prescriptions = load_json(PRESCRIPTIONS_FILE)
-        prescriptions = [p for p in prescriptions if p['id'] != id]
-        save_json(PRESCRIPTIONS_FILE, prescriptions)
-        return jsonify({"status": "success", "message": f"Prescription {id} deleted"})
-    except Exception as e:
-        app.logger.error(f"Error deleting prescription {id}: {e}")
-        return jsonify({"error": "Failed to delete prescription"}), 500
-
-@app.route('/medications/<int:id>', methods=['DELETE'])
-def delete_medication(id):
-    try:
-        medications = load_json(MEDICATIONS_FILE)
-        medications = [m for m in medications if m['id'] != id]
-        save_json(MEDICATIONS_FILE, medications)
-        return jsonify({"status": "success", "message": f"Medication {id} deleted"})
-    except Exception as e:
-        app.logger.error(f"Error deleting medication {id}: {e}")
-        return jsonify({"error": "Failed to delete medication"}), 500
-
-@app.route('/profile', methods=['GET'])
-def profile():
-    try:
-        return jsonify({"message": "Profile data"})
-    except Exception as e:
-        app.logger.error(f"Error fetching profile: {e}")
-        return jsonify({"error": "Failed to fetch profile"}), 500
-
-@app.route('/reminders/<int:id>', methods=['DELETE'])
-def delete_reminder(id):
-    try:
-        reminders = load_json(REMINDERS_FILE)
-        reminders = [r for r in reminders if r['id'] != id]
-        save_json(REMINDERS_FILE, reminders)
-        return jsonify({"status": "success", "message": f"Reminder {id} deleted"})
-    except Exception as e:
-        app.logger.error(f"Error deleting reminder {id}: {e}")
-        return jsonify({"error": "Failed to delete reminder"}), 500
-
-@app.route('/api/pharmacies', methods=['GET'])
-def get_pharmacies():
-    lat = request.args.get('lat')
-    lon = request.args.get('lon')
-    
-    if not lat or not lon:
-        return jsonify({"error": "Latitude and Longitude are required"}), 400
-    
-    try:
-        GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY")
-        if not GEOAPIFY_API_KEY:
-            app.logger.error("Geoapify API key not set")
-            return jsonify({"error": "Geoapify API key missing"}), 500
-        response = requests.get("https://api.geoapify.com/v2/places", params={
-            "categories": "healthcare.pharmacy",
-            "filter": f"circle:{lon},{lat},50000",
-            "bias": f"proximity:{lon},{lat}",
-            "limit": 10,
-            "apiKey": GEOAPIFY_API_KEY
-        })
-        response.raise_for_status()
-        data = response.json()
-        pharmacies = [{
-            "id": pharmacy["properties"].get("place_id", f"pharm-{secrets.token_hex(4)}"),
-            "name": pharmacy["properties"].get("name", "Unnamed Pharmacy"),
-            "address": pharmacy["properties"].get("formatted", "Address not available")
-        } for pharmacy in data.get("features", [])]
-        return jsonify(pharmacies)
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error fetching pharmacies: {str(e)}")
-        return jsonify({"error": f"Failed to fetch pharmacy data: {str(e)}"}), 500
-
-@app.route('/chat-gemini', methods=['POST'])
-def chat_gemini():
-    try:
-        data = request.get_json()
-        if not data or 'chat' not in data:
-            return jsonify({"error": "Message is required"}), 400
-        message = data['chat']
-        history = data.get('history', [])
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(message)
-        bot_response = response.text.strip() if response.text else "No response from AI."
-        updated_history = history + [
-            {"role": "user", "parts": [{"text": message}]},
-            {"role": "model", "parts": [{"text": bot_response}]}
-        ]
-        return jsonify({"text": bot_response, "history": updated_history})
-    except Exception as e:
-        app.logger.error(f"Error in chat-gemini: {str(e)}")
-        return jsonify({"error": f"Failed to process chat request: {str(e)}"}), 500
-
-@app.route('/get-all-alternatives', methods=['GET'])
-def get_all_alternatives():
-    try:
-        alternatives_data = load_json(ALTERNATIVES_FILE, {})
-        return jsonify({"alternatives": alternatives_data})
-    except Exception as e:
-        app.logger.error(f"Error fetching alternatives: {str(e)}")
-        return jsonify({"error": f"Failed to fetch alternatives: {str(e)}"}), 500
-
-@app.route('/get-alternatives/<drug_name>', methods=['GET'])
-def get_drug_alternatives(drug_name):
-    try:
-        alternatives_data = load_json(ALTERNATIVES_FILE, {})
-        drug_alternatives = alternatives_data.get(drug_name.lower(), [])
-        return jsonify({
-            "drug": drug_name,
-            "alternatives": drug_alternatives
-        })
-    except Exception as e:
-        app.logger.error(f"Error fetching alternatives for {drug_name}: {str(e)}")
-        return jsonify({"error": f"Failed to fetch alternatives: {str(e)}"}), 500
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)

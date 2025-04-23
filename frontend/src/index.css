@@ -1,1 +1,28 @@
 @import "tailwindcss";
+.graph-tooltip {
+    max-width: 300px;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    opacity: 0;
+  }
+  
+  .graph-tooltip.animate-fadeIn {
+    opacity: 1;
+    transform: translate(-50%, -110%) !important;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translate(-50%, -90%); }
+    to { opacity: 1; transform: translate(-50%, -110%); }
+  }
+  
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+  }
+  
+  #hospital-multigraph .node:hover {
+    animation: pulse 0.5s infinite;
+  }

@@ -337,41 +337,146 @@
         }
     ],
     "Aspirin": [
-        "Ecpirin",
-        "Pamprin Max Formula",
-        "Stanback Headache Powder Reformulated Jan 2011",
-        "BC Arthritis",
-        "BC Original Formula",
-        "Arthriten Inflammatory Pain",
-        "Bromo Seltzer Antacid Pain Reliever",
-        "Exaprin",
-        "Backaid IPF",
-        "Ascomp",
-        "Excedrin PM Triple Action",
-        "Aspi-Cor",
-        "Durlaza",
-        "Alka-Seltzer",
-        "Yosprala",
-        "Arthriten Max",
-        "Aspergum",
-        "Ecotrin",
-        "Anacin",
-        "Bayer Aspirin",
-        "Bufferin",
-        "Excedrin",
-        "Norgesic",
-        "Norwich Aspirin",
-        "P-A-C Analgesic",
-        "Saleto",
-        "St. Joseph Aspirin",
-        "Vanquish",
-        "Equagesic",
-        "Vazalore",
-        "Orphengesic",
-        "Excedrin Back & Body",
-        "Anacin Advanced Headache Formula",
-        "Anacin Aspirin Regimen",
-        "Miniprin"
+        {
+            "name": "Ecpirin",
+            "similarity": 0.9
+        },
+        {
+            "name": "Pamprin Max Formula",
+            "similarity": 0.85
+        },
+        {
+            "name": "Stanback Headache Powder Reformulated Jan 2011",
+            "similarity": 0.8
+        },
+        {
+            "name": "BC Arthritis",
+            "similarity": 0.75
+        },
+        {
+            "name": "BC Original Formula",
+            "similarity": 0.7
+        },
+        {
+            "name": "Arthriten Inflammatory Pain",
+            "similarity": 0.65
+        },
+        {
+            "name": "Bromo Seltzer Antacid Pain Reliever",
+            "similarity": 0.6
+        },
+        {
+            "name": "Exaprin",
+            "similarity": 0.55
+        },
+        {
+            "name": "Backaid IPF",
+            "similarity": 0.5
+        },
+        {
+            "name": "Ascomp",
+            "similarity": 0.45
+        },
+        {
+            "name": "Excedrin PM Triple Action",
+            "similarity": 0.4
+        },
+        {
+            "name": "Aspi-Cor",
+            "similarity": 0.35
+        },
+        {
+            "name": "Durlaza",
+            "similarity": 0.29999999999999993
+        },
+        {
+            "name": "Alka-Seltzer",
+            "similarity": 0.25
+        },
+        {
+            "name": "Yosprala",
+            "similarity": 0.19999999999999996
+        },
+        {
+            "name": "Arthriten Max",
+            "similarity": 0.15000000000000002
+        },
+        {
+            "name": "Aspergum",
+            "similarity": 0.09999999999999998
+        },
+        {
+            "name": "Ecotrin",
+            "similarity": 0.04999999999999993
+        },
+        {
+            "name": "Anacin",
+            "similarity": 0.0
+        },
+        {
+            "name": "Bayer Aspirin",
+            "similarity": -0.050000000000000044
+        },
+        {
+            "name": "Bufferin",
+            "similarity": -0.09999999999999998
+        },
+        {
+            "name": "Excedrin",
+            "similarity": -0.15000000000000002
+        },
+        {
+            "name": "Norgesic",
+            "similarity": -0.20000000000000007
+        },
+        {
+            "name": "Norwich Aspirin",
+            "similarity": -0.2500000000000001
+        },
+        {
+            "name": "P-A-C Analgesic",
+            "similarity": -0.30000000000000016
+        },
+        {
+            "name": "Saleto",
+            "similarity": -0.35
+        },
+        {
+            "name": "St. Joseph Aspirin",
+            "similarity": -0.4
+        },
+        {
+            "name": "Vanquish",
+            "similarity": -0.45000000000000007
+        },
+        {
+            "name": "Equagesic",
+            "similarity": -0.5000000000000001
+        },
+        {
+            "name": "Vazalore",
+            "similarity": -0.5500000000000002
+        },
+        {
+            "name": "Orphengesic",
+            "similarity": -0.6
+        },
+        {
+            "name": "Excedrin Back & Body",
+            "similarity": -0.65
+        },
+        {
+            "name": "Anacin Advanced Headache Formula",
+            "similarity": -0.7000000000000001
+        },
+        {
+            "name": "Anacin Aspirin Regimen",
+            "similarity": -0.7500000000000001
+        },
+        {
+            "name": "Miniprin",
+            "similarity": -0.8000000000000002
+        }
     ],
     "paracetamol": [
         "Little Fevers",
@@ -494,5 +599,93 @@
         "Anacin Advanced Headache Formula",
         "Anacin Aspirin Regimen",
         "Miniprin"
+    ],
+    "Ibuprofen": [
+        {
+            "name": "Duexis",
+            "similarity": 0.9
+        },
+        {
+            "name": "Counteract IB",
+            "similarity": 0.85
+        },
+        {
+            "name": "Proprinal",
+            "similarity": 0.8
+        },
+        {
+            "name": "Ibudone",
+            "similarity": 0.75
+        },
+        {
+            "name": "Advil",
+            "similarity": 0.7
+        },
+        {
+            "name": "Xylon",
+            "similarity": 0.65
+        },
+        {
+            "name": "Motrin",
+            "similarity": 0.6
+        },
+        {
+            "name": "Genpril",
+            "similarity": 0.55
+        },
+        {
+            "name": "Ibu",
+            "similarity": 0.5
+        },
+        {
+            "name": "Vicoprofen",
+            "similarity": 0.45
+        },
+        {
+            "name": "Combogesic",
+            "similarity": 0.4
+        },
+        {
+            "name": "Samson 8",
+            "similarity": 0.35
+        },
+        {
+            "name": "Reprexain",
+            "similarity": 0.29999999999999993
+        },
+        {
+            "name": "Neoprofen",
+            "similarity": 0.25
+        },
+        {
+            "name": "Wal-Profen",
+            "similarity": 0.19999999999999996
+        },
+        {
+            "name": "Ibuprohm",
+            "similarity": 0.15000000000000002
+        },
+        {
+            "name": "Caldolor",
+            "similarity": 0.09999999999999998
+        },
+        {
+            "name": "Motrin PM",
+            "similarity": 0.04999999999999993
+        },
+        {
+            "name": "Addaprin",
+            "similarity": 0.0
+        }
+    ],
+    "Ampicillin": [
+        {
+            "name": "Polyflex",
+            "similarity": 0.9
+        },
+        {
+            "name": "Unasyn",
+            "similarity": 0.85
+        }
     ]
 }
