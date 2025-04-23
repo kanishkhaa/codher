@@ -266,7 +266,7 @@ def fetch_alternatives(drug_names):
 class MultiGraph:
     def __init__(self):
         self.vertices = {}  # Store vertices (user location, hospitals)
-        self.edges = {}  # Store edges as adjacency list
+        self.edges = {}  # Store edges as adjacency list with modes
 
     def add_vertex(self, id, data):
         if id not in self.vertices:
@@ -278,8 +278,20 @@ class MultiGraph:
             # Ensure all required attributes are present
             required_attrs = {'distance': 'N/A', 'time': 'N/A', 'mode': 'unknown'}
             attributes = {**required_attrs, **attributes}
-            self.edges[from_id].append({'to': to_id, **attributes})
-            self.edges[to_id].append({'to': from_id, **attributes})  # Undirected
+            mode = attributes['mode']
+            
+            # Check if an edge with the same mode already exists between from_id and to_id
+            edge_key = tuple(sorted([from_id, to_id])) + (mode,)
+            existing_edge = next(
+                (edge for edge in self.edges[from_id] if edge['to'] == to_id and edge['mode'] == mode),
+                None
+            )
+            
+            if not existing_edge:
+                # Add edge in both directions (undirected graph)
+                self.edges[from_id].append({'to': to_id, **attributes})
+                self.edges[to_id].append({'to': from_id, **attributes})
+                app.logger.debug(f"Added edge: {from_id} -> {to_id}, mode: {mode}, distance: {attributes['distance']}")
 
     def get_edges(self, vertex):
         return self.edges.get(vertex, [])
@@ -288,7 +300,11 @@ class MultiGraph:
         edges = self.get_edges(user_id)
         if not edges:
             return None
-        return min(edges, key=lambda edge: edge.get(criteria, float('inf')) if isinstance(edge.get(criteria), (int, float)) else float('inf'), default=None)
+        return min(
+            edges,
+            key=lambda edge: float(edge.get(criteria, float('inf'))) if edge.get(criteria) not in ['N/A', None] else float('inf'),
+            default=None
+        )
 
     def get_paths_to_hospital(self, user_id, hospital_id):
         return [edge for edge in self.get_edges(user_id) if edge['to'] == hospital_id]
@@ -307,21 +323,23 @@ class MultiGraph:
         seen = set()
         for from_id, edge_list in self.edges.items():
             for edge in edge_list:
-                edge_id = f"{from_id}-{edge['to']}-{edge.get('mode', 'unknown')}"
-                if edge_id not in seen:
+                # Create a unique key for the edge (sorted to ensure undirected edges are not duplicated)
+                edge_key = tuple(sorted([from_id, edge['to']])) + (edge['mode'],)
+                if edge_key not in seen:
                     links.append({
                         'source': from_id,
                         'target': edge['to'],
                         'color': (
-                            '#45B7D1' if edge.get('mode') == 'driving' else
-                            '#FF9F1C' if edge.get('mode') == 'walking' else
+                            '#45B7D1' if edge['mode'] == 'driving' else
+                            '#FF9F1C' if edge['mode'] == 'walking' else
                             '#8675A9'
                         ),
-                        'label': edge.get('mode', 'unknown'),
-                        'distance': edge.get('distance', 'N/A'),
-                        'time': edge.get('time', 'N/A')
+                        'label': edge['mode'],
+                        'distance': edge['distance'],
+                        'time': edge['time']
                     })
-                    seen.add(edge_id)
+                    seen.add(edge_key)
+                    app.logger.debug(f"Graph data link added: {edge_key}")
         return {'nodes': nodes, 'links': links}
 
 def calculate_distance(lat1, lon1, lat2, lon2):
@@ -502,6 +520,15 @@ def get_hospital_graph():
             })
         graph = MultiGraph()
         graph.add_vertex('user', {'lat': lat, 'lng': lon, 'name': 'Your Location'})
+        # Deduplicate hospitals by name to avoid duplicates from Geoapify response
+        seen_hospitals = set()
+        unique_hospitals = []
+        for hospital in hospitals:
+            hospital_name = hospital['name'].lower()
+            if hospital_name not in seen_hospitals:
+                seen_hospitals.add(hospital_name)
+                unique_hospitals.append(hospital)
+        hospitals = unique_hospitals
         for hospital in hospitals:
             graph.add_vertex(hospital['id'], hospital)
             distance = calculate_distance(lat, lon, hospital['lat'], hospital['lon'])

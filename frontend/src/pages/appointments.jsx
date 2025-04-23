@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import axios from 'axios';
 import { 
   MapPin, Clock, Navigation2, Star, Search, Plus, 
-  Loader, MapIcon, Layers, X, Calendar, Bell, Network, AlertTriangle 
+  Loader, MapIcon, Layers, X, Calendar, Bell, AlertTriangle,
+  Network as NetworkIcon,
 } from 'lucide-react';
-import { Graph } from 'react-d3-graph';
+import { Network } from 'vis-network/standalone';
 import 'leaflet/dist/leaflet.css';
+import 'vis-network/styles/vis-network.css';
 import Sidebar from '../../components/sidebar';
 
 // Fix for Leaflet default icon issue
@@ -344,6 +346,9 @@ const AppointmentsPage = () => {
   const [bestHospital, setBestHospital] = useState(null);
   const [locationError, setLocationError] = useState(false);
   const [isFallbackLocation, setIsFallbackLocation] = useState(false);
+  const [visibleMode, setVisibleMode] = useState('both'); // New state to toggle between driving, walking, or both
+  const graphContainerRef = useRef(null);
+  const networkRef = useRef(null);
 
   // Geolocation function with enhanced error handling
   const getUserLocation = useCallback((retries = 3, delay = 2000) => {
@@ -357,14 +362,12 @@ const AppointmentsPage = () => {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const pos = { lat: position.coords.latitude, lng: position.coords.longitude };
-          console.log('Geolocation success:', pos);
           setCurrentPosition(pos);
           setLocationError(false);
           setIsFallbackLocation(false);
           fetchHospitalGraph(pos);
         },
         (error) => {
-          console.error('Geolocation error:', error);
           if (attempt < retries) {
             setTimeout(() => attemptLocation(attempt + 1), delay);
           } else {
@@ -373,12 +376,11 @@ const AppointmentsPage = () => {
             );
             setLocationError(true);
             setIsFallbackLocation(true);
-            // No hardcoded fallback; prompt user to retry
             setCurrentPosition(null);
             setLoading(false);
           }
         },
-        { timeout: 10000, maximumAge: 0, enableHighAccuracy: true } // maximumAge: 0 to avoid cached location
+        { timeout: 10000, maximumAge: 0, enableHighAccuracy: true }
       );
     };
 
@@ -389,17 +391,15 @@ const AppointmentsPage = () => {
     getUserLocation();
   }, [getUserLocation]);
 
-  // Fetch hospital graph with debugging
+  // Fetch hospital graph
   const fetchHospitalGraph = async (position, retries = 2, delay = 3000) => {
     setLoading(true);
     const attemptFetch = async (attempt) => {
       try {
-        console.log('Fetching hospital graph for:', position);
         const response = await axios.get(
           `http://localhost:5000/get-hospital-graph?lat=${position.lat}&lon=${position.lng}`,
           { timeout: 10000 }
         );
-        console.log('Hospital graph response:', response.data);
         if (response.data && response.data.hospitals && response.data.graph) {
           const processedHospitals = response.data.hospitals.map((hospital) => ({
             ...hospital,
@@ -422,7 +422,6 @@ const AppointmentsPage = () => {
           throw new Error('Invalid response data');
         }
       } catch (error) {
-        console.error('Error fetching hospital graph:', error);
         if (attempt < retries && error.code !== 'ECONNABORTED') {
           setTimeout(() => attemptFetch(attempt + 1), delay);
         } else {
@@ -520,10 +519,9 @@ const AppointmentsPage = () => {
       .filter((link) => link.source === 'user' && link.target === hospitalId)
       .map((link) => ({
         mode: link.label || 'Unknown',
-        distance: hospitals.find((h) => h.id === hospitalId)?.distance || 'N/A',
-        time: hospitals.find((h) => h.id === hospitalId)?.time || 'N/A',
+        distance: link.distance || 'N/A',
+        time: link.time || 'N/A',
       }));
-    // Ensure at least driving and walking paths are shown, even if incomplete
     const modes = ['driving', 'walking'];
     const result = modes.map((mode) => {
       const path = paths.find((p) => p.mode.toLowerCase() === mode);
@@ -612,29 +610,93 @@ const AppointmentsPage = () => {
     setMapZoom(13);
   };
 
-  const graphConfig = {
-    nodeHighlightBehavior: true,
-    node: {
-      color: '#4ECDC4',
-      size: 400,
-      fontSize: 12,
-      highlightStrokeColor: '#45B7D1',
-      labelProperty: 'name',
-    },
-    link: {
-      highlightColor: '#45B7D1',
-      renderLabel: true,
-      fontSize: 10,
-      color: '#8675A9',
-    },
-    height: 400,
-    width: 800,
-    directed: false,
-    d3: {
-      gravity: -200,
-      linkLength: 150,
-    },
-  };
+  // Initialize Vis.js network
+  useEffect(() => {
+    if (showGraphView && graphContainerRef.current && graphData.nodes.length > 0) {
+      const nodes = graphData.nodes.map((node) => ({
+        id: node.id,
+        label: node.name,
+        color: node.color,
+        size: node.size / 30,
+        font: { color: '#ffffff', size: 14, strokeWidth: 3, strokeColor: '#000000' },
+      }));
+
+      // Filter edges based on the visible mode
+      const filteredEdges = graphData.links.filter((link) => {
+        if (visibleMode === 'both') return true;
+        return link.label.toLowerCase() === visibleMode;
+      });
+
+      const edges = filteredEdges.map((link, index) => ({
+        id: `edge-${index}`,
+        from: link.source,
+        to: link.target,
+        label: `${link.label}: ${link.distance} km, ${link.time}m`,
+        color: link.color,
+        dashes: link.label.toLowerCase() === 'walking', // Dashed line for walking
+        font: {
+          color: '#ffffff',
+          size: 12,
+          align: link.label.toLowerCase() === 'driving' ? 'top' : 'bottom', // Different positions for driving and walking
+          strokeWidth: 2,
+          strokeColor: '#000000',
+        },
+        smooth: {
+          type: 'curvedCW',
+          roundness: link.label.toLowerCase() === 'walking' ? 0.4 : -0.4, // Increased curvature
+        },
+        title: `${link.label}: ${link.distance} km, ${link.time} minutes`, // Tooltip on hover
+      }));
+
+      const data = { nodes, edges };
+      const options = {
+        nodes: {
+          shape: 'dot',
+          scaling: { min: 8, max: 20 },
+        },
+        edges: {
+          width: 2,
+          selectionWidth: 4,
+          font: { align: 'top' },
+        },
+        physics: {
+          barnesHut: {
+            gravitationalConstant: -4000, // Further increased to spread nodes
+            centralGravity: 0.1, // Further reduced to avoid clustering
+            springLength: 250, // Further increased to spread nodes apart
+          },
+        },
+        interaction: {
+          hover: true,
+          zoomView: true,
+          dragView: true,
+          tooltipDelay: 200, // Delay for showing tooltips
+        },
+        height: '600px', // Increased height for better layout
+        width: '100%',
+      };
+
+      networkRef.current = new Network(graphContainerRef.current, data, options);
+
+      // Handle node click
+      networkRef.current.on('click', (params) => {
+        if (params.nodes.length > 0) {
+          const nodeId = params.nodes[0];
+          if (nodeId !== 'user') {
+            const hospital = hospitals.find((h) => h.id === nodeId);
+            if (hospital) setSelectedHospital(hospital);
+          }
+        }
+      });
+
+      return () => {
+        if (networkRef.current) {
+          networkRef.current.destroy();
+          networkRef.current = null;
+        }
+      };
+    }
+  }, [showGraphView, graphData, hospitals, visibleMode]);
 
   return (
     <>
@@ -674,7 +736,7 @@ const AppointmentsPage = () => {
               className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg flex items-center ml-3"
               onClick={() => setShowGraphView(!showGraphView)}
             >
-              <Network size={18} className="mr-1" />
+              <NetworkIcon size={18} className="mr-1" />
               {showGraphView ? 'Hide Graph' : 'Show Graph'}
             </button>
             <button
@@ -693,6 +755,34 @@ const AppointmentsPage = () => {
                 <h2 className="text-xl font-semibold text-white">
                   {showGraphView ? 'Hospital Network Graph' : 'Nearby Hospitals'}
                 </h2>
+                {showGraphView && (
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => setVisibleMode('both')}
+                      className={`px-3 py-1 rounded-md text-sm ${
+                        visibleMode === 'both' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Both
+                    </button>
+                    <button
+                      onClick={() => setVisibleMode('driving')}
+                      className={`px-3 py-1 rounded-md text-sm ${
+                        visibleMode === 'driving' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Driving
+                    </button>
+                    <button
+                      onClick={() => setVisibleMode('walking')}
+                      className={`px-3 py-1 rounded-md text-sm ${
+                        visibleMode === 'walking' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Walking
+                    </button>
+                  </div>
+                )}
                 {currentPosition && !showGraphView && (
                   <button
                     onClick={resetMapView}
@@ -705,19 +795,10 @@ const AppointmentsPage = () => {
               </div>
               {currentPosition ? (
                 showGraphView ? (
-                  <div className="w-full h-[400px] bg-slate-800 rounded-lg">
-                    <Graph
-                      id="hospital-graph"
-                      data={graphData}
-                      config={graphConfig}
-                      onClickNode={(nodeId) => {
-                        if (nodeId !== 'user') {
-                          const hospital = hospitals.find((h) => h.id === nodeId);
-                          if (hospital) setSelectedHospital(hospital);
-                        }
-                      }}
-                    />
-                  </div>
+                  <div
+                    ref={graphContainerRef}
+                    className="w-full h-[600px] bg-slate-800 rounded-lg" // Updated height
+                  />
                 ) : (
                   <>
                     <div className="bg-slate-800 rounded-lg p-3 mb-4">
