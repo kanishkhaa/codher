@@ -346,11 +346,12 @@ const AppointmentsPage = () => {
   const [bestHospital, setBestHospital] = useState(null);
   const [locationError, setLocationError] = useState(false);
   const [isFallbackLocation, setIsFallbackLocation] = useState(false);
-  const [visibleMode, setVisibleMode] = useState('both'); // New state to toggle between driving, walking, or both
+  const [visibleMode, setVisibleMode] = useState('both');
+  const [focusedStage, setFocusedStage] = useState(null);
   const graphContainerRef = useRef(null);
   const networkRef = useRef(null);
 
-  // Geolocation function with enhanced error handling
+  // Geolocation function
   const getUserLocation = useCallback((retries = 3, delay = 2000) => {
     if (!navigator.geolocation) {
       setErrorNotification('Geolocation is not supported by your browser.');
@@ -372,7 +373,7 @@ const AppointmentsPage = () => {
             setTimeout(() => attemptLocation(attempt + 1), delay);
           } else {
             setErrorNotification(
-              'Unable to get your location. Please enable location services in your browser settings.'
+              'Unable to get your location. Please enable location services.'
             );
             setLocationError(true);
             setIsFallbackLocation(true);
@@ -610,83 +611,194 @@ const AppointmentsPage = () => {
     setMapZoom(13);
   };
 
-  // Initialize Vis.js network
+  // Vis.js network initialization for multi-stage graph with mode hubs
   useEffect(() => {
     if (showGraphView && graphContainerRef.current && graphData.nodes.length > 0) {
-      const nodes = graphData.nodes.map((node) => ({
-        id: node.id,
-        label: node.name,
-        color: node.color,
-        size: node.size / 30,
-        font: { color: '#ffffff', size: 14, strokeWidth: 3, strokeColor: '#000000' },
-      }));
+      // Create nodes for the graph
+      const nodes = [];
+      const edges = [];
 
-      // Filter edges based on the visible mode
-      const filteredEdges = graphData.links.filter((link) => {
-        if (visibleMode === 'both') return true;
-        return link.label.toLowerCase() === visibleMode;
+      // Stage 0: User node
+      const userNode = graphData.nodes.find((node) => node.type === 'user');
+      if (userNode) {
+        nodes.push({
+          id: userNode.id,
+          label: `${userNode.name}\n(Stage 0)`,
+          color: '#4ECDC4',
+          size: 30,
+          font: { color: '#ffffff', size: 14, strokeWidth: 3, strokeColor: '#000000', multi: true },
+          level: 0,
+          title: `Type: ${userNode.type}, Stage: 0`,
+        });
+      }
+
+      // Stage 1: Mode hubs (Driving and Walking)
+      if (visibleMode === 'both' || visibleMode === 'driving') {
+        nodes.push({
+          id: 'driving_hub',
+          label: 'Driving Hub\n(Stage 1)',
+          color: '#45B7D1',
+          size: 25,
+          font: { color: '#ffffff', size: 12, strokeWidth: 2, strokeColor: '#000000', multi: true },
+          level: 1,
+          title: 'Driving Routes Hub, Stage: 1',
+        });
+      }
+      if (visibleMode === 'both' || visibleMode === 'walking') {
+        nodes.push({
+          id: 'walking_hub',
+          label: 'Walking Hub\n(Stage 1)',
+          color: '#FF9F1C',
+          size: 25,
+          font: { color: '#ffffff', size: 12, strokeWidth: 2, strokeColor: '#000000', multi: true },
+          level: 1,
+          title: 'Walking Routes Hub, Stage: 1',
+        });
+      }
+
+      // Stage 2: Hospital nodes
+      const hospitalNodes = graphData.nodes.filter((node) => node.type === 'hospital');
+      hospitalNodes.forEach((node) => {
+        nodes.push({
+          id: node.id,
+          label: `${node.name}\n(Stage 2)`,
+          color: '#FF6B6B',
+          size: 20,
+          font: { color: '#ffffff', size: 12, strokeWidth: 2, strokeColor: '#000000', multi: true },
+          level: 2,
+          title: `Type: ${node.type}, Stage: 2`,
+        });
       });
 
-      const edges = filteredEdges.map((link, index) => ({
-        id: `edge-${index}`,
-        from: link.source,
-        to: link.target,
-        label: `${link.label}: ${link.distance} km, ${link.time}m`,
-        color: link.color,
-        dashes: link.label.toLowerCase() === 'walking', // Dashed line for walking
-        font: {
-          color: '#ffffff',
-          size: 12,
-          align: link.label.toLowerCase() === 'driving' ? 'top' : 'bottom', // Different positions for driving and walking
-          strokeWidth: 2,
-          strokeColor: '#000000',
-        },
-        smooth: {
-          type: 'curvedCW',
-          roundness: link.label.toLowerCase() === 'walking' ? 0.4 : -0.4, // Increased curvature
-        },
-        title: `${link.label}: ${link.distance} km, ${link.time} minutes`, // Tooltip on hover
-      }));
+      // Create edges through mode hubs
+      graphData.links.forEach((link, index) => {
+        const mode = link.label.toLowerCase();
+        if (visibleMode !== 'both' && mode !== visibleMode) return;
+
+        const modeHubId = mode === 'driving' ? 'driving_hub' : 'walking_hub';
+        if (!nodes.some((n) => n.id === modeHubId)) return;
+
+        // Edge from user to mode hub
+        if (userNode && !edges.some((e) => e.from === userNode.id && e.to === modeHubId)) {
+          edges.push({
+            id: `user_to_${modeHubId}_${index}`,
+            from: userNode.id,
+            to: modeHubId,
+            label: mode === 'driving' ? 'Driving Routes' : 'Walking Routes',
+            color: mode === 'driving' ? '#45B7D1' : '#FF9F1C',
+            dashes: mode === 'walking',
+            font: {
+              color: '#ffffff',
+              size: 10,
+              align: 'middle',
+              strokeWidth: 2,
+              strokeColor: '#000000',
+            },
+            smooth: { type: 'curvedCW', roundness: 0.1 },
+            title: `${mode.charAt(0).toUpperCase() + mode.slice(1)} Routes`,
+            width: 2,
+            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+          });
+        }
+
+        // Edge from mode hub to hospital
+        edges.push({
+          id: `edge_${mode}_${index}`,
+          from: modeHubId,
+          to: link.target,
+          label: `${link.distance} km, ${link.time}m`,
+          color: mode === 'driving' ? '#45B7D1' : '#FF9F1C',
+          dashes: mode === 'walking',
+          font: {
+            color: '#ffffff',
+            size: 10,
+            align: 'middle',
+            strokeWidth: 2,
+            strokeColor: '#000000',
+          },
+          smooth: { type: 'curvedCW', roundness: mode === 'driving' ? 0.2 : -0.2 },
+          title: `${mode.charAt(0).toUpperCase() + mode.slice(1)}: ${link.distance} km, ${link.time} minutes`,
+          width: 2,
+          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+        });
+      });
 
       const data = { nodes, edges };
       const options = {
         nodes: {
           shape: 'dot',
-          scaling: { min: 8, max: 20 },
+          scaling: { min: 10, max: 30 },
+          font: { multi: true },
         },
         edges: {
           width: 2,
           selectionWidth: 4,
-          font: { align: 'top' },
+          font: { align: 'middle' },
+          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+        },
+        layout: {
+          hierarchical: {
+            enabled: true,
+            levelSeparation: 400,
+            nodeSpacing: 200,
+            treeSpacing: 250,
+            direction: 'LR',
+            sortMethod: 'directed',
+            shakeTowards: 'roots',
+          },
         },
         physics: {
-          barnesHut: {
-            gravitationalConstant: -4000, // Further increased to spread nodes
-            centralGravity: 0.1, // Further reduced to avoid clustering
-            springLength: 250, // Further increased to spread nodes apart
-          },
+          enabled: false,
         },
         interaction: {
           hover: true,
           zoomView: true,
           dragView: true,
-          tooltipDelay: 200, // Delay for showing tooltips
+          tooltipDelay: 200,
+          dragNodes: false,
         },
-        height: '600px', // Increased height for better layout
+        height: '600px',
         width: '100%',
       };
 
       networkRef.current = new Network(graphContainerRef.current, data, options);
 
-      // Handle node click
+      // Focus on specific stage if selected
+      if (focusedStage !== null) {
+        const stageNodes = nodes.filter((node) => node.level === focusedStage);
+        if (stageNodes.length > 0) {
+          networkRef.current.fit({
+            nodes: stageNodes.map((node) => node.id),
+            animation: { duration: 500, easingFunction: 'easeInOutQuad' },
+          });
+        }
+      } else {
+        networkRef.current.fit({
+          animation: { duration: 500, easingFunction: 'easeInOutQuad' },
+        });
+      }
+
+      // Handle node click to select hospital
       networkRef.current.on('click', (params) => {
         if (params.nodes.length > 0) {
           const nodeId = params.nodes[0];
-          if (nodeId !== 'user') {
+          if (nodeId !== 'user' && nodeId !== 'driving_hub' && nodeId !== 'walking_hub') {
             const hospital = hospitals.find((h) => h.id === nodeId);
-            if (hospital) setSelectedHospital(hospital);
+            if (hospital) {
+              setSelectedHospital(hospital);
+              addNotification(`Selected: ${hospital.name}`);
+            }
           }
         }
+      });
+
+      // Handle edge hover to highlight path
+      networkRef.current.on('hoverEdge', (params) => {
+        networkRef.current.setSelection({ edges: [params.edge] });
+      });
+
+      networkRef.current.on('blurEdge', () => {
+        networkRef.current.setSelection({ edges: [] });
       });
 
       return () => {
@@ -696,7 +808,7 @@ const AppointmentsPage = () => {
         }
       };
     }
-  }, [showGraphView, graphData, hospitals, visibleMode]);
+  }, [showGraphView, graphData, hospitals, visibleMode, focusedStage]);
 
   return (
     <>
@@ -753,10 +865,10 @@ const AppointmentsPage = () => {
             <div className="bg-slate-900 rounded-lg p-4 border border-slate-800">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-semibold text-white">
-                  {showGraphView ? 'Hospital Network Graph' : 'Nearby Hospitals'}
+                  {showGraphView ? 'Hospital Network Graph (Multi-Stage)' : 'Nearby Hospitals'}
                 </h2>
                 {showGraphView && (
-                  <div className="flex space-x-2">
+                  <div className="flex space-x-2 flex-wrap gap-y-2">
                     <button
                       onClick={() => setVisibleMode('both')}
                       className={`px-3 py-1 rounded-md text-sm ${
@@ -781,6 +893,38 @@ const AppointmentsPage = () => {
                     >
                       Walking
                     </button>
+                    <button
+                      onClick={() => setFocusedStage(null)}
+                      className={`px-3 py-1 rounded-md text-sm ${
+                        focusedStage === null ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      All Stages
+                    </button>
+                    <button
+                      onClick={() => setFocusedStage(0)}
+                      className={`px-3 py-1 rounded-md text \n                    text-sm ${
+                        focusedStage === 0 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      User (Stage 0)
+                    </button>
+                    <button
+                      onClick={() => setFocusedStage(1)}
+                      className={`px-3 py-1 rounded-md text-sm ${
+                        focusedStage === 1 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Mode Hubs (Stage 1)
+                    </button>
+                    <button
+                      onClick={() => setFocusedStage(2)}
+                      className={`px-3 py-1 rounded-md text-sm ${
+                        focusedStage === 2 ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Hospitals (Stage 2)
+                    </button>
                   </div>
                 )}
                 {currentPosition && !showGraphView && (
@@ -797,7 +941,7 @@ const AppointmentsPage = () => {
                 showGraphView ? (
                   <div
                     ref={graphContainerRef}
-                    className="w-full h-[600px] bg-slate-800 rounded-lg" // Updated height
+                    className="w-full h-[600px] bg-slate-800 rounded-lg"
                   />
                 ) : (
                   <>

@@ -18,9 +18,12 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from dotenv import load_dotenv
 from math import sin, cos, sqrt, atan2, radians
+import logging
 
 # Load environment variables
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -261,42 +264,48 @@ def fetch_alternatives(drug_names):
         else:
             app.logger.warning(f"No brand names found for '{drug}'")
     return result
-
-# MultiGraph class implementation
-class MultiGraph:
+class MultiStageGraph:
     def __init__(self):
-        self.vertices = {}  # Store vertices (user location, hospitals)
-        self.edges = {}  # Store edges as adjacency list with modes
+        self.vertices = {}  # {vertex_id: {data, stage, type}}
+        self.edges = {}  # {vertex_id: [{to, distance, time, mode}]}
+        self.stages = {}  # {stage_number: [vertex_ids]}
 
-    def add_vertex(self, id, data):
+    def add_vertex(self, id, data, stage, type):
+        """Add a vertex to the specified stage."""
         if id not in self.vertices:
-            self.vertices[id] = data
+            self.vertices[id] = {'data': data, 'stage': stage, 'type': type}
             self.edges[id] = []
+            if stage not in self.stages:
+                self.stages[stage] = []
+            self.stages[stage].append(id)
+            logger.debug(f"Added vertex {id} (type: {type}) to stage {stage}")
 
     def add_edge(self, from_id, to_id, attributes):
-        if from_id in self.vertices and to_id in self.vertices:
-            # Ensure all required attributes are present
-            required_attrs = {'distance': 'N/A', 'time': 'N/A', 'mode': 'unknown'}
-            attributes = {**required_attrs, **attributes}
-            mode = attributes['mode']
-            
-            # Check if an edge with the same mode already exists between from_id and to_id
-            edge_key = tuple(sorted([from_id, to_id])) + (mode,)
-            existing_edge = next(
-                (edge for edge in self.edges[from_id] if edge['to'] == to_id and edge['mode'] == mode),
-                None
-            )
-            
-            if not existing_edge:
-                # Add edge in both directions (undirected graph)
-                self.edges[from_id].append({'to': to_id, **attributes})
-                self.edges[to_id].append({'to': from_id, **attributes})
-                app.logger.debug(f"Added edge: {from_id} -> {to_id}, mode: {mode}, distance: {attributes['distance']}")
+        """Add an edge between vertices if they are in consecutive stages."""
+        if from_id not in self.vertices or to_id not in self.vertices:
+            return
+        from_stage = self.vertices[from_id]['stage']
+        to_stage = self.vertices[to_id]['stage']
+        if to_stage != from_stage + 1:
+            logger.debug(f"Skipped edge {from_id} -> {to_id}: not consecutive stages ({from_stage} -> {to_stage})")
+            return
+        required_attrs = {'distance': 'N/A', 'time': 'N/A', 'mode': 'unknown'}
+        attributes = {**required_attrs, **attributes}
+        mode = attributes['mode']
+        existing_edge = next(
+            (edge for edge in self.edges[from_id] if edge['to'] == to_id and edge['mode'] == mode),
+            None
+        )
+        if not existing_edge:
+            self.edges[from_id].append({'to': to_id, **attributes})
+            self.edges[to_id].append({'to': from_id, **attributes})
+            logger.debug(f"Added edge: {from_id} -> {to_id}, mode: {mode}, distance: {attributes['distance']}")
 
     def get_edges(self, vertex):
         return self.edges.get(vertex, [])
 
     def find_best_hospital(self, user_id, criteria='distance'):
+        """Find the best hospital in Stage 1 based on the given criteria."""
         edges = self.get_edges(user_id)
         if not edges:
             return None
@@ -306,16 +315,16 @@ class MultiGraph:
             default=None
         )
 
-    def get_paths_to_hospital(self, user_id, hospital_id):
-        return [edge for edge in self.get_edges(user_id) if edge['to'] == hospital_id]
-
     def get_graph_data(self):
+        """Generate graph data for vis.js with stage and type information."""
         nodes = [
             {
                 'id': id,
-                'name': data.get('name', id),
-                'color': '#4ECDC4' if id == 'user' else '#FF6B6B',
-                'size': 600 if id == 'user' else 400
+                'name': data['data'].get('name', id),
+                'color': '#4ECDC4' if data['type'] == 'user' else '#FF6B6B',
+                'size': 600 if data['type'] == 'user' else 400,
+                'stage': data['stage'],
+                'type': data['type']
             }
             for id, data in self.vertices.items()
         ]
@@ -323,26 +332,22 @@ class MultiGraph:
         seen = set()
         for from_id, edge_list in self.edges.items():
             for edge in edge_list:
-                # Create a unique key for the edge (sorted to ensure undirected edges are not duplicated)
                 edge_key = tuple(sorted([from_id, edge['to']])) + (edge['mode'],)
                 if edge_key not in seen:
                     links.append({
                         'source': from_id,
                         'target': edge['to'],
-                        'color': (
-                            '#45B7D1' if edge['mode'] == 'driving' else
-                            '#FF9F1C' if edge['mode'] == 'walking' else
-                            '#8675A9'
-                        ),
+                        'color': '#45B7D1' if edge['mode'] == 'driving' else '#FF9F1C',
                         'label': edge['mode'],
                         'distance': edge['distance'],
                         'time': edge['time']
                     })
                     seen.add(edge_key)
-                    app.logger.debug(f"Graph data link added: {edge_key}")
+                    logger.debug(f"Graph data link added: {edge_key}")
         return {'nodes': nodes, 'links': links}
 
 def calculate_distance(lat1, lon1, lat2, lon2):
+    """Calculate distance between two points using Haversine formula."""
     R = 6371  # Earth's radius in km
     dLat = radians(lat2 - lat1)
     dLon = radians(lon2 - lon1)
@@ -350,6 +355,122 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return R * c
 
+@app.route('/get-hospital-graph', methods=['GET'])
+def get_hospital_graph():
+    try:
+        # Extract parameters
+        lat = request.args.get('lat')
+        lon = request.args.get('lon')
+        geoapify_api_key = os.getenv("GEOAPIFY_API_KEY")
+
+        # Validate parameters
+        if not lat or not lon:
+            logger.error("Missing lat or lon parameters")
+            return jsonify({"error": "Latitude and longitude are required"}), 400
+        if not geoapify_api_key:
+            logger.error("Geoapify API key not configured in environment variables")
+            return jsonify({"error": "Geoapify API key is not configured on the server"}), 500
+
+        try:
+            lat, lon = float(lat), float(lon)
+        except ValueError:
+            logger.error(f"Invalid lat or lon values: lat={lat}, lon={lon}")
+            return jsonify({"error": "Invalid latitude or longitude values"}), 400
+
+        logger.info(f"Processing hospital graph for coordinates: lat={lat}, lon={lon}")
+
+        # Make Geoapify API request
+        response = requests.get("https://api.geoapify.com/v2/places", params={
+            "categories": "healthcare.hospital",
+            "filter": f"circle:{lon},{lat},50000",
+            "bias": f"proximity:{lon},{lat}",
+            "limit": 10,
+            "apiKey": geoapify_api_key
+        })
+
+        # Handle Geoapify API errors
+        if response.status_code == 401:
+            logger.error("Geoapify API unauthorized: Invalid API key")
+            return jsonify({"error": "Invalid Geoapify API key. Please contact the administrator."}), 401
+        elif response.status_code == 429:
+            logger.error("Geoapify API rate limit exceeded")
+            return jsonify({"error": "Geoapify API rate limit exceeded. Please try again later."}), 429
+        response.raise_for_status()
+
+        data = response.json()
+        logger.info(f"Geoapify response: {len(data.get('features', []))} hospitals found")
+
+        hospitals = [
+            {
+                "id": hospital["properties"].get("place_id", f"hosp-{os.urandom(4).hex()}"),
+                "name": hospital["properties"].get("name", "Unnamed Hospital"),
+                "address": hospital["properties"].get("formatted", "Address not available"),
+                "lat": hospital["geometry"]["coordinates"][1],
+                "lon": hospital["geometry"]["coordinates"][0]
+            }
+            for hospital in data.get('features', [])
+        ]
+
+        if not hospitals:
+            logger.warning("No hospitals found in Geoapify response")
+            return jsonify({
+                "graph": {"nodes": [], "links": []},
+                "hospitals": [],
+                "best_hospital": None
+            })
+
+        graph = MultiStageGraph()
+        # Stage 0: User
+        graph.add_vertex('user', {'lat': lat, 'lng': lon, 'name': 'Your Location'}, 0, 'user')
+        # Stage 1: Hospitals
+        seen_hospitals = set()
+        unique_hospitals = []
+        for hospital in hospitals:
+            hospital_name = hospital['name'].lower()
+            if hospital_name not in seen_hospitals:
+                seen_hospitals.add(hospital_name)
+                unique_hospitals.append(hospital)
+        hospitals = unique_hospitals
+        for hospital in hospitals:
+            graph.add_vertex(hospital['id'], hospital, 1, 'hospital')
+            distance = calculate_distance(lat, lon, hospital['lat'], hospital['lon'])
+            hospital['distance'] = round(distance, 1)
+            hospital['time_driving'] = round(distance * 3)  # 3 minutes per km
+            hospital['time_walking'] = round(distance * 12)  # 12 minutes per km
+            # Add edges from user to hospital
+            graph.add_edge('user', hospital['id'], {
+                'distance': hospital['distance'],
+                'time': hospital['time_driving'],
+                'mode': 'driving'
+            })
+            graph.add_edge('user', hospital['id'], {
+                'distance': round(distance * 1.2, 1),
+                'time': hospital['time_walking'],
+                'mode': 'walking'
+            })
+
+        graph_data = graph.get_graph_data()
+        best_hospital_edge = graph.find_best_hospital('user', 'distance')
+        best_hospital = None
+        if best_hospital_edge:
+            best_hospital_id = best_hospital_edge['to']
+            best_hospital = next((h for h in hospitals if h['id'] == best_hospital_id), None)
+            if best_hospital:
+                best_hospital['distance'] = best_hospital_edge['distance']
+                best_hospital['time'] = best_hospital_edge['time']
+                best_hospital['mode'] = best_hospital_edge['mode']
+        logger.info(f"Graph generated: {len(graph_data['nodes'])} nodes, {len(graph_data['links'])} links")
+        return jsonify({
+            'graph': graph_data,
+            'hospitals': hospitals,
+            'best_hospital': best_hospital
+        })
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Geoapify API error: {str(e)}")
+        return jsonify({"error": f"Geoapify API error: {str(e)}"}), e.response.status_code
+    except Exception as e:
+        logger.error(f"Error processing hospital graph: {str(e)}")
+        return jsonify({"error": f"Failed to process hospital graph: {str(e)}"}), 500
 @app.route('/dashboard', methods=['GET'])
 def get_dashboard_data():
     try:
@@ -476,101 +597,6 @@ def get_drug_graph():
     except Exception as e:
         app.logger.error(f"Error fetching drug graph: {str(e)}")
         return jsonify({"error": f"Failed to fetch drug graph: {str(e)}"}), 500
-
-@app.route('/get-hospital-graph', methods=['GET'])
-def get_hospital_graph():
-    lat = request.args.get('lat')
-    lon = request.args.get('lon')
-    if not lat or not lon:
-        app.logger.error("Missing latitude or longitude parameters")
-        return jsonify({"error": "Latitude and Longitude are required"}), 400
-    try:
-        lat, lon = float(lat), float(lon)
-        app.logger.info(f"Processing hospital graph for coordinates: lat={lat}, lon={lon}")
-        GEOAPIFY_API_KEY = os.getenv("GEOAPIFY_API_KEY")
-        if not GEOAPIFY_API_KEY:
-            app.logger.error("Geoapify API key not set")
-            return jsonify({"error": "Geoapify API key missing"}), 500
-        response = requests.get("https://api.geoapify.com/v2/places", params={
-            "categories": "healthcare.hospital",
-            "filter": f"circle:{lon},{lat},50000",
-            "bias": f"proximity:{lon},{lat}",
-            "limit": 10,
-            "apiKey": GEOAPIFY_API_KEY
-        })
-        response.raise_for_status()
-        data = response.json()
-        app.logger.info(f"Geoapify response: {len(data.get('features', []))} hospitals found")
-        hospitals = [
-            {
-                "id": hospital["properties"].get("place_id", f"hosp-{secrets.token_hex(4)}"),
-                "name": hospital["properties"].get("name", "Unnamed Hospital"),
-                "address": hospital["properties"].get("formatted", "Address not available"),
-                "lat": hospital["geometry"]["coordinates"][1],
-                "lon": hospital["geometry"]["coordinates"][0]
-            }
-            for hospital in data.get("features", [])
-        ]
-        if not hospitals:
-            app.logger.warning("No hospitals found in Geoapify response")
-            return jsonify({
-                "graph": {"nodes": [], "links": []},
-                "hospitals": [],
-                "best_hospital": None
-            })
-        graph = MultiGraph()
-        graph.add_vertex('user', {'lat': lat, 'lng': lon, 'name': 'Your Location'})
-        # Deduplicate hospitals by name to avoid duplicates from Geoapify response
-        seen_hospitals = set()
-        unique_hospitals = []
-        for hospital in hospitals:
-            hospital_name = hospital['name'].lower()
-            if hospital_name not in seen_hospitals:
-                seen_hospitals.add(hospital_name)
-                unique_hospitals.append(hospital)
-        hospitals = unique_hospitals
-        for hospital in hospitals:
-            graph.add_vertex(hospital['id'], hospital)
-            distance = calculate_distance(lat, lon, hospital['lat'], hospital['lon'])
-            hospital['distance'] = round(distance, 1)
-            hospital['time_driving'] = round(distance * 3)  # 3 minutes per km
-            hospital['time_walking'] = round(distance * 12)  # 12 minutes per km
-            # Add driving edge
-            graph.add_edge('user', hospital['id'], {
-                'distance': hospital['distance'],
-                'time': hospital['time_driving'],
-                'mode': 'driving'
-            })
-            # Add walking edge
-            graph.add_edge('user', hospital['id'], {
-                'distance': round(distance * 1.2, 1),  # Slightly longer for walking
-                'time': hospital['time_walking'],
-                'mode': 'walking'
-            })
-        graph_data = graph.get_graph_data()
-        best_hospital_edge = graph.find_best_hospital('user', 'distance')
-        best_hospital = None
-        if best_hospital_edge:
-            best_hospital_id = best_hospital_edge['to']
-            best_hospital = next((h for h in hospitals if h['id'] == best_hospital_id), None)
-            if best_hospital:
-                best_hospital['distance'] = best_hospital_edge['distance']
-                best_hospital['time'] = best_hospital_edge['time']
-                best_hospital['mode'] = best_hospital_edge['mode']
-        app.logger.info(f"Graph generated: {len(graph_data['nodes'])} nodes, {len(graph_data['links'])} links")
-        app.logger.debug(f"Hospitals: {json.dumps(hospitals, indent=2)}")
-        app.logger.debug(f"Graph data: {json.dumps(graph_data, indent=2)}")
-        return jsonify({
-            'graph': graph_data,
-            'hospitals': hospitals,
-            'best_hospital': best_hospital
-        })
-    except requests.exceptions.RequestException as e:
-        app.logger.error(f"Geoapify API error: {str(e)}")
-        return jsonify({"error": f"Failed to fetch hospital data: {str(e)}"}), 500
-    except Exception as e:
-        app.logger.error(f"Error processing hospital graph: {str(e)}")
-        return jsonify({"error": f"Failed to process hospital graph: {str(e)}"}), 500
 
 @app.route('/find-alternatives', methods=['POST'])
 def find_alternatives():
@@ -715,7 +741,6 @@ def delete_prescription(id):
             return jsonify({"error": "Prescription not found"}), 404
         prescriptions = [p for p in prescriptions if p['id'] != id]
         save_json(PRESCRIPTIONS_FILE, prescriptions)
-        # Remove associated file if it exists
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], prescription['filename'])
         if os.path.exists(filepath):
             os.remove(filepath)
