@@ -1,1 +1,9 @@
-[]
+[
+    {
+        "id": 1,
+        "filename": "prescriptionss3.png",
+        "date": "2025-04-29",
+        "structured_text": "**Patient Information:**\n\n* Name: PATIENT (M)\n* Age: 13 Years\n* Gender: Male\n* Mobile No.: 9423380390\n* Address: PUNE\n* Weight: 80 kg\n* Height: 200 cm\n* BMI: 20.00\n* BP: 120/80 mmHg\n\n**Doctor Information:**\n\n* Name: Dr. Akshara Vel\n* Hospital/Clinic: SMS Hospital, M.S. B/503, Business Center, MG Road, Pune\n* Reg. No: MMC 2018 - 411000\n* Phone: 5465647658\n* Timing: 09:00 AM - 01:00 PM, 06:00 PM - 08:00 PM (Closed: Sunday)\n\n**Medications:**\n\n* **1) Abciximab:** 1 tablet in the morning for 8 days (Total: 8 tablets)\n* **2) Vomilast:** 1 tablet in the morning and 1 tablet at night (after food) for 8 days (Total: 16 tablets)  (Contains Doxylamine 10mg + Pyridoxine 10mg + Folic Acid 2.5mg)\n* **3) Zoclar 500 (Clarithromycin 500mg):** 1 capsule in the morning for 3 days (Total: 3 capsules)\n* **4) Gestakind 10/SR (Isoxsuprine 10mg):** 1 tablet at night for 4 days (Total: 4 tablets)\n\n\n**Special Instructions:**\n\n* Take bed rest.\n* Do not eat outside food.\n* Eat easy-to-digest food like boiled rice with daal.\n* Follow Up: 04-Sep-2023\n* Substitute with equivalent generics as required.\n\n**Diagnosis:**\n\n* Malaria\n\n**Chief Complaints:**\n\n* Fever with chills (4 days)\n* Headache (2 days)\n\n**Clinical Findings:**\n\n* Test findings for a test patient.  (This indicates placeholder text and likely isn't a real clinical finding) Entering sample diagnosis and sample prescription.",
+        "generic_predictions": {}
+    }
+]
